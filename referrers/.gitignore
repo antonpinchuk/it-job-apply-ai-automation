@@ -1,0 +1,8 @@
+.doc/
+node_modules/
+.playwright-mcp
+.apollo-session.json
+.env
+.mcp.json
+*.log
+
