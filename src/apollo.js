@@ -1,10 +1,8 @@
 /**
  * Apollo.io API client — all calls via page.evaluate(fetch(...)) to leverage
  * the browser session (needed for Cloudflare cf_clearance bypass).
- * No UI interaction at all.
  */
 
-// Cached auth (CSRF token + owner ID), fetched once per session
 let _auth = null;
 
 async function getAuth(page) {
@@ -41,10 +39,8 @@ async function apolloFetch(page, path, body) {
 }
 
 /**
- * Resolves a LinkedIn company URL to an Apollo organization ID.
- * @param {import('playwright').Page} page
- * @param {string} linkedinUrl  e.g. https://www.linkedin.com/company/beyondtrust
- * @returns {Promise<string>} Apollo org ID
+ * Resolves a company name / LinkedIn URL / Apollo ID to an org object.
+ * @returns {Promise<{ id: string, name: string, linkedinUrl: string|null }>}
  */
 export async function resolveOrgId(page, linkedinUrl, { id, name } = {}) {
   const { csrf } = await getAuth(page);
@@ -59,9 +55,10 @@ export async function resolveOrgId(page, linkedinUrl, { id, name } = {}) {
       },
       { id, csrf }
     );
-    const orgName = data.organization?.name || id;
+    const org = data.organization;
+    const orgName = org?.name || id;
     console.log(`[apollo] Using org: "${orgName}" → ${id}`);
-    return { id, name: orgName };
+    return { id, name: orgName, linkedinUrl: org?.linkedin_url || null };
   }
 
   const slug = linkedinUrl ? linkedinUrl.replace(/\/$/, '').split('/').pop().toLowerCase() : null;
@@ -81,13 +78,10 @@ export async function resolveOrgId(page, linkedinUrl, { id, name } = {}) {
   );
 
   const orgs = data.organizations || [];
-  if (!orgs.length) throw new Error(`[apollo] Company not found. Try --name="Company Name" or --id=<apollo_id>`);
+  if (!orgs.length) throw new Error(`[apollo] Company not found: "${query}"`);
 
-  for (const o of orgs) {
-    console.log(`[apollo]   "${o.name}" (${o.id})`);
-  }
+  for (const o of orgs) console.log(`[apollo]   "${o.name}" (${o.id})`);
 
-  // organizations/search doesn't return linkedin_url — fetch full details for top candidates
   const candidates = orgs.slice(0, 3);
   const details = await Promise.all(candidates.map(o =>
     page.evaluate(
@@ -108,21 +102,11 @@ export async function resolveOrgId(page, linkedinUrl, { id, name } = {}) {
   const org = byUrl || details[0] || orgs[0];
   const matched = byUrl ? ' ✓ URL match' : ' (first result)';
   console.log(`[apollo] Using org: "${org.name}" → ${org.id}${matched}`);
-  return { id: org.id, name: org.name };
+  return { id: org.id, name: org.name, linkedinUrl: org.linkedin_url || null };
 }
 
-/**
- * Fetches one page of engineering contacts for an org.
- * @param {import('playwright').Page} page
- * @param {string} orgId
- * @param {number} pageNum
- * @param {string} location  e.g. "Canada"
- * @returns {Promise<{ contacts: Array, totalPages: number, totalEntries: number }>}
- */
 const IT_DEPARTMENTS = [
-  // Information Technology (top-level)
   'master_information_technology',
-  // Engineering & Technical — IT-specific subdepartments only
   'software_development',
   'devops',
   'cloud_mobility',
@@ -141,6 +125,10 @@ const IT_DEPARTMENTS = [
   'support_technical_services',
 ];
 
+/**
+ * Fetches one page of engineering contacts for an org.
+ * @returns {Promise<{ contacts: Array, totalPages: number, totalEntries: number }>}
+ */
 export async function fetchContactsPage(page, orgId, pageNum, location) {
   const data = await apolloFetch(page, '/api/v1/mixed_people/search', {
     organization_ids: [orgId],
@@ -157,17 +145,11 @@ export async function fetchContactsPage(page, orgId, pageNum, location) {
   const contacts = people.map(p => ({
     id: p.id,
     name: p.name || `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+    title: p.title || p.employment_history?.[0]?.title || '',
     linkedinUrl: p.linkedin_url || null,
-    employment: extractEmploymentOrgs(p),
+    employment: (p.employment_history || []).map(e => e?.organization_name).filter(Boolean),
   }));
 
   console.log(`[apollo] Page ${pageNum}/${pg.total_pages || '?'} — ${people.length} people`);
-
   return { contacts, totalPages: pg.total_pages || 1, totalEntries: pg.total_entries || 0 };
-}
-
-function extractEmploymentOrgs(person) {
-  return (person.employment_history || [])
-    .map(e => e?.organization_name)
-    .filter(Boolean);
 }

@@ -1,13 +1,15 @@
 {
-  "name": "job-referrers",
+  "name": "job-automation",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "auth": "node src/auth.js"
+    "auth": "node src/auth.js",
+    "find": "node src/find.js",
+    "start": "node src/main.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0",
     "openai": "^4.67.0",
     "playwright": "^1.49.0",
     "playwright-extra": "^4.3.6",

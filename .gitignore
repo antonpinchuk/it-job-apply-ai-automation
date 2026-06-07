@@ -1,0 +1,8 @@
+.claude
+.doc
+.playwright-mcp
+.session
+node_modules
+.env
+.mcp.json
+*.log
