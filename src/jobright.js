@@ -38,8 +38,19 @@ async function fetchBanner(jobId, sessionId) {
     console.log('[jobright] Banner missing company/title, got:', JSON.stringify(banner?.result).slice(0, 200));
     return null;
   }
-  console.log(`[jobright] "${companyName}" / "${jobTitle}" [${companyCategories}]`);
-  return { companyName, jobTitle, jobId, companyCategories };
+
+  // Salary lives in a separate endpoint
+  let salaryMin = null, salaryMax = null, salaryDesc = null;
+  try {
+    const detail = await apiFetch(`/share/job/${jobId}`, sessionId);
+    const jr = detail?.result?.jobDetail?.jobResult;
+    salaryMin  = jr?.minSalary  ?? null;
+    salaryMax  = jr?.maxSalary  ?? null;
+    salaryDesc = jr?.salaryDesc ?? null;
+  } catch { /* salary is optional */ }
+
+  console.log(`[jobright] "${companyName}" / "${jobTitle}" salary=${salaryDesc ?? `${salaryMin}-${salaryMax}`} [${companyCategories}]`);
+  return { companyName, jobTitle, jobId, companyCategories, salaryMin, salaryMax, salaryDesc };
 }
 
 /**

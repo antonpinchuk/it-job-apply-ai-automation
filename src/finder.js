@@ -4,6 +4,8 @@ import { fetchContactsPage } from './apollo.js';
 const LLM_CONCURRENCY = parseInt(process.env.LLM_CONCURRENCY || '3', 10);
 const CONFIDENCE_ORDER = ['high', 'medium', 'low'];
 
+export const searchAbort = new AbortController();
+
 async function mapConcurrent(items, concurrency, fn) {
   const results = new Array(items.length);
   let idx = 0;
@@ -57,6 +59,8 @@ export async function findPeople(apolloPage, orgId, {
   let pageNum = 1;
 
   outer: while (true) {
+    if (searchAbort.signal.aborted) break;
+
     const { contacts, totalPages } = await fetchContactsPage(apolloPage, orgId, pageNum, location);
 
     // Single LLM call per person: name origin + role match
@@ -66,6 +70,8 @@ export async function findPeople(apolloPage, orgId, {
         return { contact: c, ...r };
       })
     );
+
+    if (searchAbort.signal.aborted) break;
 
     // Check employer for UA/RU name matches
     const nameMatches = classified.filter(r => r.isUkrOrRus);
@@ -77,10 +83,10 @@ export async function findPeople(apolloPage, orgId, {
     for (const r of withEmployer) {
       if (!r.contact.linkedinUrl) continue;
       if (r.empMatch) {
-        results.push({ name: r.contact.name, linkedinUrl: r.contact.linkedinUrl, confidence: r.nameConfidence });
+        results.push({ name: r.contact.name, title: r.contact.title, linkedinUrl: r.contact.linkedinUrl, confidence: r.nameConfidence, nameOrigin: r.nameOrigin });
         if (results.length >= maxResults) break outer;
       } else {
-        maybes.push({ name: r.contact.name, linkedinUrl: r.contact.linkedinUrl, confidence: r.nameConfidence });
+        maybes.push({ name: r.contact.name, title: r.contact.title, linkedinUrl: r.contact.linkedinUrl, confidence: r.nameConfidence, nameOrigin: r.nameOrigin });
       }
     }
 
@@ -88,7 +94,7 @@ export async function findPeople(apolloPage, orgId, {
     for (const r of classified) {
       if (!r.contact.linkedinUrl) continue;
       if (!r.isUkrOrRus && r.roleMatch) {
-        byRole.push({ name: r.contact.name, linkedinUrl: r.contact.linkedinUrl, confidence: r.roleConfidence });
+        byRole.push({ name: r.contact.name, title: r.contact.title, linkedinUrl: r.contact.linkedinUrl, confidence: r.roleConfidence, nameOrigin: 'other' });
       }
     }
 

@@ -6,9 +6,11 @@
 export const ROLE_OPTIONS = ['Lead', 'Architect', 'Developer', 'DevOps', 'MLOps', 'Director'];
 
 export const DOMAIN_EXAMPLES = [
-  'fintech', 'healthcare', 'AI', 'gaming', 'SaaS', 'enterprise', 'e-commerce',
+  'fintech', 'healthcare', 'AI', 'gaming', 'SaaS', 'enterprise', 'ecommerce',
   'media', 'telecom', 'cloud', 'cybersecurity', 'edtech', 'logistics', 'real estate',
-  'consulting', 'HR tech', 'martech', 'IoT', 'energy', 'government',
+  'consulting', 'IoT', 'energy', 'government',
+  'automotive', 'marketing', 'recruitment', 'vendor', 'tools', 'opensource',
+  'games', 'apps', 'social media',
 ];
 
 export const STACK_EXAMPLES = [

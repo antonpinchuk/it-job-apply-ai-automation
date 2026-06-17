@@ -1,6 +1,6 @@
 # Job Application Automation
 
-Automates steps 5 and 7 of the job application process: finds referrers at a company via Apollo.io and logs the application to Google Sheets.
+Automates steps 5–7 of the job application process: finds referrers at a company via Apollo.io, generates personalized LinkedIn connection messages, and logs the application to Google Sheets.
 
 ## Application workflow
 
@@ -13,25 +13,41 @@ Manual process (full flow):
    - Priority: Ukrainians/Russians in Canada and the US
    - Fallback: people with a matching role (if no UA/RU found)
 5. **Script opens** the LinkedIn company page + up to 5 profiles of found people
-6. Manually send a custom message to each person
+6. **Script generates** a personalized connection message for each profile and pre-fills the Connect dialog (user reviews and sends manually)
 7. **Script logs** the application to Google Sheets: date, status, role, stack, company, domain, location, 4 referrers with "Connection sent" notes
 
 ## What the script does
 
 ```
-1. Fetches company name and job title via Jobright API (or prompts manually)
-2. LLM classifies the job → Role + Stack (1 call)
-3. Resolves company in Apollo.io
-4. Opens the LinkedIn company page
-5. Cascade referrer search:
-   Phase 1: Canada (UA/RU name + employer)
-   Phase 2: USA   (UA/RU, only if Phase 1 empty)
-   Phase 3: Canada by role (cache, no new Apollo requests)
-   Phase 4: USA   by role  (cache, only if Phase 3 empty)
-6. Opens up to 5 LinkedIn profiles for review
-7. Pauses: user closes unwanted tabs, keeps up to 4
-8. LLM determines Domain (from Jobright categories) and normalizes Loc (from LinkedIn company page)
-9. Writes a row to Google Sheets + cell notes "Connection sent"
+1.  Fetches company name and job title via Jobright API (or prompts manually)
+2.  LLM classifies the job → Role + Stack (1 call)
+3.  Resolves company in Apollo.io
+4.  Opens the LinkedIn company page
+5.  Cascade referrer search (press Enter to stop early and continue with open tabs):
+      Phase 1: Canada (UA/RU name + employer)
+      Phase 2: USA   (UA/RU, only if Phase 1 empty)
+      Phase 3: Canada by role (cache, no new Apollo requests)
+      Phase 4: USA   by role  (cache, only if Phase 3 empty)
+      — Enter stops search (plz wait for batch calls finished)
+6.  Opens up to 5 LinkedIn profiles for review
+7.  Pauses: user closes unwanted tabs, keeps up to 4 → press Enter
+8.  LLM determines Domain + isMedtech flag (from Jobright categories)
+    Normalizes Loc from LinkedIn company /about/ page
+9.  For each open profile tab:
+      a. Scrolls profile to load Education / Languages / Experience sections
+      b. Scrapes: university, location, about, job description, language flags
+      c. Classifies university location + person location + title match (3 parallel LLM calls)
+      d. Determines message language:
+           Ukrainian university → Ukrainian
+           Russian university   → Russian
+           Ukrainian in Languages section → Ukrainian
+           Russian in Languages section  → Russian
+           default              → English
+      e. Generates personalized message (~300 chars, gpt-4.1):
+           picks 1 customization — tech overlaps (medtech, gamedev, IoT, mobile, DevOps)
+           take priority over location hints (Toronto coffee, US company, Ottawa, etc.)
+      f. Opens Connect dialog → "Add a note" → pre-fills textarea (does NOT send)
+10. Writes a row to Google Sheets + cell notes "Connection sent"
 ```
 
 ## Requirements
@@ -102,6 +118,8 @@ The script pauses twice:
 1. After opening profiles — close unwanted tabs, keep up to 4, press Enter
 2. After writing to the sheet — verify the row, press Enter to close browsers
 
+**Tip:** during the referrer search (Phase 1–4), press **Enter** to stop early and continue with whatever profiles are already open. The current LLM batch will finish first, then the search stops. Stdin is flushed after the search so any extra keypresses don't leak into the next prompt.
+
 ### Standalone search (no Sheets logging)
 
 ```bash
@@ -122,7 +140,8 @@ src/
 ├── finder.js     — referrer search logic (cascadeSearch → findPeople)
 ├── apollo.js     — Apollo.io API via browser session
 ├── jobright.js   — Jobright API (HTTP, SESSION_ID cookie)
-├── llm.js        — Azure OpenAI: name, role, domain, location classification
+├── llm.js        — Azure OpenAI: name/role/domain/location/message generation
+├── linkedin.js   — LinkedIn profile scraping + Connect dialog filling
 ├── sheets.js     — Google Sheets writer
 └── config.js     — role options and Stack/Domain examples for LLM few-shot
 ```

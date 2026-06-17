@@ -1,15 +1,24 @@
 import OpenAI from 'openai';
 
-const client = new OpenAI({
-  apiKey: process.env.AZURE_OPENAI_KEY,
-  baseURL: `${process.env.AZURE_OPENAI_ENDPOINT.replace(/\/$/, '')}/openai/deployments/${process.env.AZURE_OPENAI_DEPLOYMENT}`,
-  defaultQuery: { 'api-version': process.env.AZURE_OPENAI_API_VERSION || '2024-08-01-preview' },
-  defaultHeaders: { 'api-key': process.env.AZURE_OPENAI_KEY },
-});
+function makeClient(deployment) {
+  return new OpenAI({
+    apiKey: process.env.AZURE_OPENAI_KEY,
+    baseURL: `${process.env.AZURE_OPENAI_ENDPOINT.replace(/\/$/, '')}/openai/deployments/${deployment}`,
+    defaultQuery: { 'api-version': process.env.AZURE_OPENAI_API_VERSION || '2024-08-01-preview' },
+    defaultHeaders: { 'api-key': process.env.AZURE_OPENAI_KEY },
+  });
+}
+
+const client       = makeClient(process.env.AZURE_OPENAI_DEPLOYMENT);
+const clientStrong = makeClient(process.env.AZURE_OPENAI_DEPLOYMENT_STRONG || 'gpt-4.1');
 
 let _pauseUntil = 0;
 
-async function ask(prompt) {
+async function ask(prompt, { strong = false, maxTokens = 100 } = {}) {
+  const c   = strong ? clientStrong : client;
+  const dep = strong
+    ? (process.env.AZURE_OPENAI_DEPLOYMENT_STRONG || 'gpt-4.1')
+    : process.env.AZURE_OPENAI_DEPLOYMENT;
   for (;;) {
     const wait = _pauseUntil - Date.now();
     if (wait > 0) {
@@ -17,11 +26,11 @@ async function ask(prompt) {
       await new Promise(r => setTimeout(r, wait));
     }
     try {
-      const response = await client.chat.completions.create({
-        model: process.env.AZURE_OPENAI_DEPLOYMENT,
+      const response = await c.chat.completions.create({
+        model: dep,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0,
-        max_tokens: 100,
+        max_tokens: maxTokens,
         response_format: { type: 'json_object' },
       });
       const raw = response.choices[0].message.content;
@@ -76,12 +85,13 @@ roleMatch: Does their title suggest they work in ${role} or a closely related ar
 Only JSON, no explanation.
   `.trim());
 
-  const isUkrOrRus = result.nameOrigin === 'ukrainian' || result.nameOrigin === 'russian';
+  const nameOrigin = result.nameOrigin || 'other';
+  const isUkrOrRus = nameOrigin === 'ukrainian' || nameOrigin === 'russian';
   const nameConfidence = result.nameConfidence || 'low';
   const roleMatch = result.roleMatch === true;
   const roleConfidence = result.roleConfidence || 'low';
-  console.log(`[llm] "${name}" (${title || '?'}) → origin=${result.nameOrigin}(${nameConfidence}) role=${roleMatch}(${roleConfidence})`);
-  return { isUkrOrRus, nameConfidence, roleMatch, roleConfidence };
+  console.log(`[llm] "${name}" (${title || '?'}) → origin=${nameOrigin}(${nameConfidence}) role=${roleMatch}(${roleConfidence})`);
+  return { nameOrigin, isUkrOrRus, nameConfidence, roleMatch, roleConfidence };
 }
 
 export async function isUkrOrRusEmployer(employers, name) {
@@ -132,6 +142,8 @@ Few-shot examples:
 - "DevOps & Platform Solution Engineer" → {"role":"DevOps","stack":"Platform"}
 - "Site Reliability Engineer" → {"role":"DevOps","stack":"SRE"}
 - "AWS Infrastructure Developer" → {"role":"DevOps","stack":"AWS"}
+- "Developer Experience Engineer" → {"role":"DevOps","stack":"DevEx"}
+- "Software Engineer, Developer Experience" → {"role":"DevOps","stack":"DevEx"}
 - "Engineering Manager - Machine Learning" → {"role":"Lead","stack":"ML"}
 - "AI/ML Engineer" → {"role":"Developer","stack":"AI/ML"}
 - "Staff Cloud Engineer, Site Reliability Engineering" → {"role":"Lead","stack":"DevOps"}
@@ -174,40 +186,263 @@ Return only JSON: {"location": "..."}
 
 /**
  * Generate a 1-word domain label from Jobright company categories.
+ * Also returns isMedtech flag for connect message personalization.
  * @param {string} categories  e.g. "Consumer Goods,Gaming,Video Games"
  * @param {string[]} examples  existing domain values from config.js
- * @returns {Promise<string>}
+ * @returns {Promise<{label: string, isMedtech: boolean}>}
  */
 export async function generateDomainLabel(categories, examples) {
   const result = await ask(`
 Classify this company into a 1-word industry domain label.
 
-Company categories from Jobright: "${categories}"
+Input company categories from Jobright: "${categories}"
 
 Examples of labels from previous applications (match this style):
 ${examples.join(', ')}
 
 Rules:
 - Exactly 1 word (or short phrase if truly necessary, e.g. "HR tech")
-- Prefer reusing an existing example if it fits well
-- Otherwise create a new label in the same style
+- Prefer reusing an existing example if it fits well ("HR" -> recruiting, "dating app" -> social media) 
+- Otherwise create a new label in the same style (low case)
+- isMedtech: true if the company is in healthcare, medical devices, telehealth, pharma, hospital tech, or medical SaaS
 
-Return only JSON: {"label": "..."}
+Return only JSON: {"label": "...", "isMedtech": true | false}
   `.trim());
   const label = result.label?.trim() || categories.split(',')[0].trim().toLowerCase();
-  console.log(`[llm] Domain label: "${label}" (from: "${categories}")`);
-  return label;
+  const isMedtech = result.isMedtech === true;
+  console.log(`[llm] Domain label: "${label}" isMedtech=${isMedtech} (from: "${categories}")`);
+  return { label, isMedtech };
 }
 
-export async function isUkrOrRusUniversity(university) {
-  if (!university?.trim()) return false;
+/**
+ * Classify a university location for connect message personalization.
+ * @param {string} university
+ * @returns {Promise<'Kropyvnytskyi'|'Ukraine'|'Russia'|'Other'>}
+ */
+export async function classifyUniversityLocation(university) {
+  if (!university?.trim()) return 'Other';
   const result = await ask(`
-Determine if the following university or educational institution is located in Ukraine or Russia.
-University: "${university}"
-Answer in JSON: {"country": "ukraine" | "russia" | "other", "confidence": "high" | "medium" | "low"}
-Only JSON, no explanation.
+Where is this university located? "${university}"
+
+Return JSON: {"location": "Kropyvnytskyi" | "Ukraine" | "Russia" | "Other"}
+
+Rules:
+- "Kropyvnytskyi" — if in Kropyvnytskyi / Kirovograd / Кропивницький / Кіровоград, Ukraine
+- "Ukraine" — any other Ukrainian university
+- "Russia" — any Russian university
+- "Other" — everything else (US, Canada, EU, etc.)
+
+Only JSON.
   `.trim());
-  const isMatch = result.country === 'ukraine' || result.country === 'russia';
-  console.log(`[llm] University "${university}" -> ${result.country} (${result.confidence})`);
-  return isMatch;
+  const loc = result.location || 'Other';
+  console.log(`[llm] University "${university}" location → ${loc}`);
+  return loc;
+}
+
+/**
+ * Classify a person's location for connect message personalization.
+ * @param {string} rawLocation  — scraped from LinkedIn profile page
+ * @returns {Promise<'Toronto'|'Ottawa'|'Canada'|'US'|'Other'>}
+ */
+export async function classifyPersonLocation(rawLocation) {
+  if (!rawLocation?.trim()) return 'Other';
+  const result = await ask(`
+Classify this person's location for a job referral tool.
+
+Location: "${rawLocation}"
+
+Return JSON: {"location": "Toronto" | "Ottawa" | "Canada" | "US" | "Other"}
+
+Rules:
+- "Toronto" — Toronto, Mississauga, Brampton, Oakville, Burlington, Hamilton, Markham, Vaughan, Richmond Hill, Newmarket, Pickering, Ajax, Whitby, Oshawa, Scarborough, North York, Etobicoke, GTA
+- "Ottawa" — Ottawa, Kanata, Nepean, Gloucester, Orleans, Gatineau
+- "Canada" — anywhere else in Canada
+- "US" — anywhere in the United States
+- "Other" — outside Canada and US
+
+Only JSON.
+  `.trim());
+  const loc = result.location || 'Other';
+  console.log(`[llm] Person location "${rawLocation}" → ${loc}`);
+  return loc;
+}
+
+/**
+ * LLM-based title match: does recipient's title suggest the same role as the vacancy?
+ * @param {string} recipientTitle
+ * @param {string} jobRole  e.g. "DevOps"
+ * @returns {Promise<boolean>}
+ */
+async function titleMatchesJobRole(recipientTitle, jobRole) {
+  if (!recipientTitle?.trim() || !jobRole?.trim()) return false;
+  const result = await ask(`
+Does this person's job title suggest they work in the same department/area as the role we're hiring for?
+
+Person's title: "${recipientTitle}"
+Hiring role: "${jobRole}"
+
+Use semantic similarity. Examples for DevOps:
+- MATCH: Site Reliability Engineer, Cloud Engineer, Platform Engineer, Infrastructure Engineer, DevEx Engineer, CI/CD Engineer
+- NO MATCH: Android Developer, iOS Developer, Mobile Engineer, Backend Engineer, Frontend Engineer, Full-stack Engineer, Engineering Manager, Data Scientist
+
+Return JSON: {"match": true | false}
+  `.trim());
+  return result.match === true;
+}
+
+/**
+ * Generate a personalized LinkedIn connection message.
+ *
+ * @param {{
+ *   name: string,
+ *   title: string,
+ *   companyName: string,
+ *   jobTitle: string,
+ *   jobRole: string,
+ *   nameOrigin: 'ukrainian'|'russian'|'other',
+ *   university: string|null,
+ *   location: string|null,
+ *   profileAbout: string|null,
+ *   currentJobDesc: string|null,
+ *   isMedtech?: boolean,
+ *   isUSCompany?: boolean,
+ *   hasUkrainian?: boolean,
+ *   hasRussian?: boolean,
+ * }} data
+ * @returns {Promise<string>}  The message text (~300 chars)
+ */
+export async function generateConnectMessage(data) {
+  const {
+    name, title, companyName, jobTitle, jobRole,
+    nameOrigin, university, location, profileAbout, currentJobDesc,
+    isMedtech = false, isUSCompany = false,
+    hasUkrainian = false, hasRussian = false,
+  } = data;
+
+  // ── Parallel: university location + person location + title match ─────────
+  const [uniLoc, personLoc, titleMatch] = await Promise.all([
+    university ? classifyUniversityLocation(university) : Promise.resolve('Other'),
+    location   ? classifyPersonLocation(location)       : Promise.resolve('Other'),
+    title      ? titleMatchesJobRole(title, jobRole)    : Promise.resolve(false),
+  ]);
+
+  // Language: university location is primary signal.
+  // If uni is unknown (Other), fall back to Languages section on their profile.
+  const lang = (uniLoc === 'Ukraine' || uniLoc === 'Kropyvnytskyi') ? 'Ukrainian'
+    : uniLoc === 'Russia' ? 'Russian'
+    : hasUkrainian ? 'Ukrainian'
+    : hasRussian   ? 'Russian'
+    : 'English';
+
+  // ── Profile overlap hints (regex — fast, no extra LLM call) ───────────────
+  const profileText = [profileAbout, currentJobDesc, title].filter(Boolean).join(' ');
+  const hasGamedev  = /game|unity|unreal|gamedev/i.test(profileText);
+  const hasIoT      = /iot|embedded|device|firmware|hardware/i.test(profileText);
+  const hasMobile   = /mobile|android|ios|swift|kotlin/i.test(profileText);
+  const hasDevOps   = /devops|ci[\/ ]?cd|kubernetes|jenkins|pipeline|terraform/i.test(profileText);
+
+  // ── Customization hints (0-1 chosen by LLM) ───────────────────────────────
+  const customizations = [
+    titleMatch
+      ? (lang === 'Ukrainian' ? `Посада контакта схожа з вакансією — встав "можливо навіть в твою команду" після назви ролі`
+        : lang === 'Russian'  ? `Должность контакта совпадает — вставь "возможно даже в твою команду"`
+        : `Their title matches the role — insert "possibly even your team" after mentioning the role`)
+      : null,
+    isUSCompany && (personLoc === 'Canada' || personLoc === 'Toronto' || personLoc === 'Ottawa')
+      ? (lang === 'Ukrainian' ? `Компанія US, контакт в Канаді — додай "Бачу що ти з Канади працюєш на велику US компанію"`
+        : lang === 'Russian'  ? `Компания в US, контакт в Канаде — добавь "вижу ты из Канады работаешь на большую US компанию"`
+        : `US company with Canadian employee — add "I see you're in Canada working for a big US company"`)
+      : null,
+    personLoc === 'Toronto'
+      ? (lang === 'Ukrainian' ? `Живе в GTA — запропонуй "буду радий навіть зустрітись на каву в даунтауні"`
+        : lang === 'Russian'  ? `Живёт в GTA — предложи встретиться на кофе`
+        : `Lives in Toronto/GTA — offer to meet for coffee downtown`)
+      : null,
+    personLoc === 'Ottawa'
+      ? (lang === 'Ukrainian' ? `Живе в Оттаві — додай "в мене є друзі в Оттаві"`
+        : lang === 'Russian'  ? `Живёт в Оттаве — упомяни "у меня есть знакомые в Оттаве"`
+        : `Lives in Ottawa — mention "I have friends in Ottawa"`)
+      : null,
+    uniLoc === 'Kropyvnytskyi'
+      ? (lang === 'Ukrainian' ? `Університет з Кропивницького — додай "якщо ти з Кропивницького, можливо чув про мене"`
+        : `University from Kropyvnytskyi — mention they might have heard of you`)
+      : null,
+    isMedtech
+      ? (lang === 'Ukrainian' ? `Медтех компанія — додай "давно хотів перейти назад з фінтеху в медтех"`
+        : lang === 'Russian'  ? `Медтех компания — добавь "давно хотел вернуться из финтеха в медтех"`
+        : `Medtech company — mention "I've been wanting to move back from fintech to medtech"`)
+      : null,
+    hasGamedev
+      ? (lang === 'Ukrainian' ? `Є gamedev досвід — додай "я теж по фану пилю проект на Unreal"`
+        : lang === 'Russian'  ? `Есть gamedev опыт — добавь "я тоже по фану пилю проект на Unreal"`
+        : `Has gamedev experience — mention you also do gamedev as a hobby on Unreal`)
+      : null,
+    hasIoT
+      ? (lang === 'Ukrainian' ? `Є IoT/embedded досвід — додай "я трохи займався IoT"`
+        : lang === 'Russian'  ? `Есть IoT опыт — добавь "я немного занимался IoT"`
+        : `Has IoT/embedded experience — mention you also dabbled in IoT`)
+      : null,
+    hasMobile
+      ? (lang === 'Ukrainian' ? `Є мобайл досвід — додай "я 10+ років був в мобайлі"`
+        : lang === 'Russian'  ? `Есть мобильный опыт — добавь "я 10+ лет был в мобайле"`
+        : `Has mobile experience — mention you spent 10+ years in mobile`)
+      : null,
+    hasDevOps && !titleMatch
+      ? (lang === 'Ukrainian' ? `Є DevOps/CI/CD скіли — додай "бачу багато спільного в скіллах"`
+        : lang === 'Russian'  ? `Есть DevOps скиллы — добавь "вижу много общего в скиллах"`
+        : `Has DevOps skills — mention you see many shared skills`)
+      : null,
+  ].filter(Boolean);
+
+  const customizationBlock = customizations.length > 0
+    ? `Pick at most ONE personalization from this list. Tech/interest overlaps (medtech, gamedev, IoT, mobile, DevOps, skills) are more important than location hints — prefer them when both apply. Shorten other parts to fit within 300 chars.\n${customizations.map(c => `- ${c}`).join('\n')}`
+    : `No personalizations available — write the base message only.`;
+
+  const langInstruction = lang === 'Ukrainian'
+    ? `Write in UKRAINIAN. Simple conversational Ukrainian. Abbreviations like "проф." are fine. Friendly/informal tone. Can be slightly dramatic.`
+    : lang === 'Russian'
+    ? `Write in RUSSIAN. Simple conversational Russian. Abbreviations like "проф." are fine.`
+    : `Write in ENGLISH. Simple conversational English. More conservative tone.`;
+
+  const result = await ask(`
+Write a LinkedIn connection request message on behalf of Anton, a ${jobRole} engineer.
+Anton applied for a ${jobRole} role at ${companyName} and is looking for a referral.
+
+Recipient: ${title || 'employee'} at ${companyName}
+${university ? `Their university: ${university} (location: ${uniLoc})` : ''}
+${location   ? `Their location: ${location} (classified: ${personLoc})` : ''}
+${profileAbout ? `Their About (excerpt): ${profileAbout.slice(0, 200)}` : ''}
+
+${langInstruction}
+
+Real message examples written by Anton — match this style exactly (vocabulary, tone, sentence length):
+Ukrainian:
+- "Привіт, я бачив вакансію DevOps в Канадський GlobalLogic. Допоможи пліз звʼязатись з місцевим рекрутером, або з керівником якщо знаєш хто наймає. Без референсу зараз навіть не відповідають. Буду радий проф. знайомству."
+- "Привіт, я бачив у вас наймують DevOps-а. Я зааплаївся. Можливо це навіть в твою команду. Конкуренція зараз велика. Рекрутери не відповідають. Шукаю інші шляхи презентувати себе наймаючому менеджеру. Хоча б щоб попасти на інтервʼю. Буду радий проф. знайомству."
+- "Привіт, цікава ваша компанія, 20 людей працюють з Канади. Я сам цікавлюся трейдингом. Я зааплаївся на відкриту позицію, але рекрутери не відповідають. Ти б міг мене зареферить? Хоча б щоб попасти на інтервʼю. Буду також радий проф. знайомству. Може навіть зустрітись на каву в даунтауні."
+Russian:
+- "Привет, интересна ваша компания. Зааплаился вакансию DevOps, рекрутеры пока молчат. Ищу пути достучаться и попасть на интервью. Буду рад проф. знакомству. Я тоже занимался GameDev, по фану пилю проект на unreal."
+
+Message structure (TARGET ~300 chars, HARD LIMIT 300 chars, adapt freely, stay natural):
+1. Привіт / Hi / Привет  (NO name after greeting — saves space)
+2. Ваша компанія наймає ${jobRole} / Your company is hiring ${jobRole}
+3. Я зааплайився / I applied
+4. Рекрутер не відповідає / Recruiter hasn't responded
+5. Шукаю шляхи попасти на інтервʼю / Looking for ways to get to an interview
+6. Буду радий проф. знайомству / Happy to connect professionally
+
+${customizationBlock}
+
+Rules:
+- Target EXACTLY ~300 characters — expand base message if no personalization used, shorten if personalization is added
+- NO name after "Привіт"/"Hi"/"Привет" — start directly with the company/role info
+- Sound like a real human, NOT an AI template
+- No emojis
+
+Return only JSON: {"message": "..."}
+  `.trim(), { strong: true, maxTokens: 350 });
+
+  const message = result.message?.trim() || '';
+  console.log(`[llm] Connect message (${lang}, uniLoc=${uniLoc}, personLoc=${personLoc}, titleMatch=${titleMatch}, ${message.length} chars): ${message}`);
+  return message;
 }

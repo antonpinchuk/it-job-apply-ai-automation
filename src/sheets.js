@@ -63,7 +63,9 @@ async function getSheetTitle(sheetsApi) {
  *   4  Company      =HYPERLINK(linkedinCompanyUrl, companyName)
  *   5  Domain
  *   6  Loc
- *   7-10            empty (Contact, Recruiter, Salary, Rate)
+ *   7-8             empty (Contact, Recruiter)
+ *   9               Salary max K/yr (from Jobright, if annual)
+ *   10              Rate max $/hr  (from Jobright, if hourly)
  *   11-14           LinkedIn URLs of referrers (up to 4)
  *   15              empty (Notes)
  *
@@ -80,7 +82,17 @@ async function getSheetTitle(sheetsApi) {
  * }} data
  * @returns {Promise<number>} row number added
  */
-export async function appendApplication({ jobUrl, jobTitle, jobRole, companyName, linkedinCompanyUrl, domain, loc, referrers = [] }) {
+function parseSalary(desc) {
+  if (!desc) return { annual: null, hourly: null };
+  const isHourly = /\/hr/i.test(desc);
+  const nums = [...desc.matchAll(/\$?([\d.]+)(K)?/gi)].map(m =>
+    isHourly ? parseFloat(m[1]) : parseFloat(m[1]) * (m[2] ? 1 : 0.001)
+  );
+  const max = nums.length ? Math.max(...nums) : null;
+  return isHourly ? { annual: null, hourly: max } : { annual: max, hourly: null };
+}
+
+export async function appendApplication({ jobUrl, jobTitle, jobRole, companyName, linkedinCompanyUrl, domain, loc, referrers = [], salaryDesc = null }) {
   const auth = getOAuth2Client();
   const sheets = google.sheets({ version: 'v4', auth });
   const sheetTitle = await getSheetTitle(sheets);
@@ -93,6 +105,9 @@ export async function appendApplication({ jobUrl, jobTitle, jobRole, companyName
   row[4] = hyperlink(linkedinCompanyUrl, companyName);
   row[5] = domain || '';
   row[6] = loc || '';
+  const { annual, hourly } = parseSalary(salaryDesc);
+  if (annual) row[9] = annual;
+  if (hourly) row[10] = hourly;
   for (let i = 0; i < 4; i++) {
     row[11 + i] = referrers[i] || '';
   }
