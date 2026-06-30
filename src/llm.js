@@ -406,7 +406,7 @@ export async function generateConnectMessage(data) {
 
   const result = await ask(`
 Write a LinkedIn connection request message on behalf of Anton, a ${jobRole} engineer.
-Anton applied for a ${jobRole} role at ${companyName} and is looking for a referral.
+Anton sees an interesting ${jobRole} opening at ${companyName} and is looking for a referral.
 
 Recipient: ${title || 'employee'} at ${companyName}
 ${university ? `Their university: ${university} (location: ${uniLoc})` : ''}
@@ -418,16 +418,15 @@ ${langInstruction}
 Real message examples written by Anton — match this style exactly (vocabulary, tone, sentence length):
 Ukrainian:
 - "Привіт, я бачив вакансію DevOps в Канадський GlobalLogic. Допоможи пліз звʼязатись з місцевим рекрутером, або з керівником якщо знаєш хто наймає. Без референсу зараз навіть не відповідають. Буду радий проф. знайомству."
-- "Привіт, я бачив у вас наймують DevOps-а. Я зааплаївся. Можливо це навіть в твою команду. Конкуренція зараз велика. Рекрутери не відповідають. Шукаю інші шляхи презентувати себе наймаючому менеджеру. Хоча б щоб попасти на інтервʼю. Буду радий проф. знайомству."
-- "Привіт, цікава ваша компанія, 20 людей працюють з Канади. Я сам цікавлюся трейдингом. Я зааплаївся на відкриту позицію, але рекрутери не відповідають. Ти б міг мене зареферить? Хоча б щоб попасти на інтервʼю. Буду також радий проф. знайомству. Може навіть зустрітись на каву в даунтауні."
+- "Привіт, я бачив у вас наймують DevOps-а. Можливо це навіть в твою команду. Конкуренція зараз велика. Рекрутери не відповідають. Шукаю інші шляхи презентувати себе наймаючому менеджеру. Хоча б щоб попасти на інтервʼю. Буду радий проф. знайомству."
+- "Привіт, цікава ваша компанія, 20 людей працюють з Канади. Я сам цікавлюся трейдингом. Я знайшов цікаву відкриту позицію, але рекрутери часто не відповідають. Ти б міг мене зареферить? Хоча б щоб попасти на інтервʼю. Буду також радий проф. знайомству. Може навіть зустрітись на каву в даунтауні."
 Russian:
-- "Привет, интересна ваша компания. Зааплаился вакансию DevOps, рекрутеры пока молчат. Ищу пути достучаться и попасть на интервью. Буду рад проф. знакомству. Я тоже занимался GameDev, по фану пилю проект на unreal."
+- "Привет, интересна ваша компания. Увидел открытую вакансию DevOps, рекрутеры сейчас плохо отвечают. Ищу пути достучаться и попасть на интервью. Буду рад проф. знакомству. Я тоже занимался GameDev, по фану пилю проект на unreal."
 
 Message structure (TARGET ~300 chars, HARD LIMIT 300 chars, adapt freely, stay natural):
 1. Привіт / Hi / Привет  (NO name after greeting — saves space)
 2. Ваша компанія наймає ${jobRole} / Your company is hiring ${jobRole}
-3. Я зааплайився / I applied
-4. Рекрутер не відповідає / Recruiter hasn't responded
+4. Рекрутери зараз майже не відповідають / Recruiters often do not respond
 5. Шукаю шляхи попасти на інтервʼю / Looking for ways to get to an interview
 6. Буду радий проф. знайомству / Happy to connect professionally
 

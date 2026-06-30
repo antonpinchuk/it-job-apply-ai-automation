@@ -181,13 +181,14 @@ Instruction to LLM: *"Tech/interest overlaps (medtech, gamedev, IoT, mobile, Dev
 
 ```
 1. Привіт / Hi / Привет  (NO name after greeting)
-2. Your company is hiring <jobRole>
-3. I applied
-4. Recruiter hasn't responded
-5. Looking for ways to get to an interview
-6. Happy to connect professionally
+2. I see an interesting <jobRole> opening at your company
+3. Recruiters now often do not respond
+4. Looking for ways to get to an interview, through the reference
+5. Happy to connect professionally
 [+ 1 personalization if space permits]
 ```
+
+Note: do NOT mention "I applied" — some referrers feel they won't get a hiring bonus if the person already applied.
 
 Real examples from Anton in the prompt for style matching.
 
