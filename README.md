@@ -6,6 +6,12 @@ Unfortunately, AI keeps taking over many IT jobs. These days, around 400 candida
 
 Automates steps 5–7 of the job application process: finds referrers at a company via Apollo.io, generates personalized LinkedIn connection messages, and logs the application to Google Sheets.
 
+Feel free to fork and customize this repo for your needs:
+- Your location and language
+- Referrer qualification and custom message prompts
+- LLM provider
+- Data sources (job site, leadgen db)
+
 ## Application workflow
 
 Manual process (full flow):
@@ -59,6 +65,7 @@ Manual process (full flow):
 - Node.js 18+
 - Chrome installed
 - Accounts: LinkedIn, Apollo.io, Jobright, Google
+- LLM: Azure Foundry
 
 ## Setup
 
