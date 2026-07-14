@@ -1,0 +1,91 @@
+# Candidate profile for job applications
+# Claude Code will append new fields here when encountered during apply
+
+account:
+  email: anton*******@gmail.com
+  password: *********
+
+hard_skills:
+  short:
+  medium:
+
+salary:
+  - canada:
+    fulltime: 175000
+    contract: 100/hr
+  - usa:
+    fulltime: 125000
+    contract: 75/hr
+
+terms:
+  hybrid: yes
+  onsite: no
+  remote: preferred
+
+personal:
+  salutation: Mr.
+  first_name: Anton
+  last_name: Pinchuk
+  middle_name: ~
+  preferred_name: ~
+  email_primary: anton********@gmail.com
+  phone: "+164****96**"
+  phone_country_code: "+1"
+  phone_type: mobile
+  phone_extension: ~
+
+address:
+  street: 1234-567 Queens Quay W
+  city: Toronto
+  province_state: Ontario
+  postal_code: M5V **6
+  country: Canada
+
+education:
+  - institution: Central Ukrainian National Technical University
+    degree: Master
+    field: Computer Science
+    start_year: 1998
+    end_year: 2003
+
+certifications:
+  - name: Microsoft (see CV)
+
+languages:
+  - language: English
+    proficiency: fluent
+  - language: Ukrainian
+    proficiency: native
+  - language: Russian
+    proficiency: fluent
+
+demographics:
+  sex: Male
+  gender: Man
+  lgbtq: Prefer not to say
+  disability_status: No
+  veteran_status: No
+  race: White
+
+eligibility:
+  eligible_to_work: Yes
+  interview_language: English
+  is_student: No
+  availability_to_start: Immediately
+  availability_for_interview: Any (afternoon preferred)
+  sponsorship:
+    - canada: no
+    - usa: yes
+
+referral:
+  how_did_you_hear: LinkedIn
+  previously_employed: No
+
+compliance:
+  government_or_pep_connection: No
+  capital_markets_license: No
+  retain_contact_for_future: Yes
+
+social_media:
+  linkedin: https://www.linkedin.com/in/antonpinchuk/
+  github: https://github.com/antonpinchuk

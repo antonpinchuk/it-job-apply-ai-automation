@@ -6,9 +6,9 @@ Unfortunately, AI keeps taking over many IT jobs. These days, around 400 candida
 
 Automates steps 5–7 of the job application process: finds referrers at a company via Apollo.io, generates personalized LinkedIn connection messages, and logs the application to Google Sheets.
 
-Feel free to fork and customize this repo for your needs:
+Feel **free to fork** and customize this repo for your needs:
 - Your location and language
-- Referrer qualification and custom message prompts
+- Prompts for referrer qualification and custom message 
 - LLM provider
 - Data sources (job site, leadgen db)
 
@@ -156,3 +156,23 @@ src/
 ├── sheets.js     — Google Sheets writer
 └── config.js     — role options and Stack/Domain examples for LLM few-shot
 ```
+
+## Non-code apply agent (deprecated)
+
+Every company application form is unique. Even if they use workday/greenhouse, each of them have different self-hosted versions, different fields, different selectors. It's not possible to create unified algorithmic solution to fill every form.
+
+For that I attempted to created 'agent' (actually Claude Code instructions), located in
+```
+apply-agent/
+```
+this agent analyzes target application form, then fills it making decisions based on user profile and CV. This agent works, but with limitations:
+- very slow, more than 5 minutes, 
+- unless form is multistep (workday), then it takes longer than manual fill
+- consumes a lot of tokens per application
+- makes a lot of mistakes
+
+so I made a decision to use paid service, `Jobright`. These guys analyze every form for every company only once, and re-use if for every user. In my case, there are only few companies where I apply more than once. 
+
+Jobright plugin at least fills the for fast, but still accuracy is not 100%.
+
+I left this agent sources here, to share the idea of how to build such non-code agents and browser MCP to automate kind of any task.  
