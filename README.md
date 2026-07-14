@@ -1,5 +1,9 @@
 # Job Application Automation
 
+With this tool I can make **30-50** applications per day.
+
+Unfortunately, AI keeps taking over many IT jobs. These days, around 400 candidates apply for a single position, and often recruiters don't even open your CV. To increase my chances of getting an interview with a good company, I'm looking for referrals from people who share a similar technical background and speak the same language as me.  
+
 Automates steps 5–7 of the job application process: finds referrers at a company via Apollo.io, generates personalized LinkedIn connection messages, and logs the application to Google Sheets.
 
 ## Application workflow
