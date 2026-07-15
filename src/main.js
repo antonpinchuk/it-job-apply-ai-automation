@@ -28,14 +28,17 @@ function ask(prompt) {
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  let jobUrl = null, role = 'DevOps';
+  let jobUrl = null, role = 'DevOps', apolloId = null;
   for (let i = 0; i < args.length; i++) {
-    const eq = args[i].match(/^--role=(.+)$/);
-    if (eq) { role = eq[1]; }
+    const eqRole = args[i].match(/^--role=(.+)$/);
+    const eqId   = args[i].match(/^--id=(.+)$/);
+    if (eqRole) { role = eqRole[1]; }
     else if (args[i] === '--role' && args[i + 1]) { role = args[++i]; }
+    else if (eqId) { apolloId = eqId[1]; }
+    else if (args[i] === '--id' && args[i + 1]) { apolloId = args[++i]; }
     else if (!args[i].startsWith('--')) { jobUrl = args[i]; }
   }
-  return { jobUrl, role };
+  return { jobUrl, role, apolloId };
 }
 
 /**
@@ -99,7 +102,7 @@ async function cascadeSearch(apolloPage, orgId, role) {
 }
 
 async function main() {
-  const { jobUrl, role } = parseArgs();
+  const { jobUrl, role, apolloId } = parseArgs();
   if (!jobUrl) {
     console.error('Usage: npm run start -- <job-page-url>');
     process.exit(1);
@@ -159,29 +162,34 @@ async function main() {
 
   // ── STEP 4: Find company in Apollo ──────────────────────────────
   let orgId, orgName, linkedinCompanyUrl;
-  let searchName = companyName;
-  while (true) {
-    try {
-      const org = await resolveOrgId(apolloPage, null, { name: searchName });
-      orgId = org.id;
-      orgName = org.name;
-      linkedinCompanyUrl = org.linkedinUrl;
-      break;
-    } catch {
-      const retry = await ask(
-        `[main] Apollo: "${searchName}" not found.\n` +
-        `       Enter different company name, Apollo org ID, or leave blank to skip: `
-      );
-      if (!retry) { await linkedinBrowser.close(); await apolloBrowser.close(); process.exit(0); }
-      // Support direct ID input (24-char hex)
-      if (/^[a-f0-9]{24}$/i.test(retry)) {
-        try {
-          const org = await resolveOrgId(apolloPage, null, { id: retry });
-          orgId = org.id; orgName = org.name; linkedinCompanyUrl = org.linkedinUrl;
-          break;
-        } catch { /* fall through to retry loop */ }
+  if (apolloId) {
+    const org = await resolveOrgId(apolloPage, null, { id: apolloId });
+    orgId = org.id; orgName = org.name; linkedinCompanyUrl = org.linkedinUrl;
+  } else {
+    let searchName = companyName;
+    while (true) {
+      try {
+        const org = await resolveOrgId(apolloPage, null, { name: searchName });
+        orgId = org.id;
+        orgName = org.name;
+        linkedinCompanyUrl = org.linkedinUrl;
+        break;
+      } catch {
+        const retry = await ask(
+          `[main] Apollo: "${searchName}" not found.\n` +
+          `       Enter different company name, Apollo org ID, or leave blank to skip: `
+        );
+        if (!retry) { await linkedinBrowser.close(); await apolloBrowser.close(); process.exit(0); }
+        // Support direct ID input (24-char hex)
+        if (/^[a-f0-9]{24}$/i.test(retry)) {
+          try {
+            const org = await resolveOrgId(apolloPage, null, { id: retry });
+            orgId = org.id; orgName = org.name; linkedinCompanyUrl = org.linkedinUrl;
+            break;
+          } catch { /* fall through to retry loop */ }
+        }
+        searchName = retry;
       }
-      searchName = retry;
     }
   }
 
