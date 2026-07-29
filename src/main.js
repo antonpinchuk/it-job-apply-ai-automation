@@ -10,7 +10,7 @@ import { applySession, saveSession, sessionExists } from './session.js';
 import { isLoggedOut } from './auth.js';
 import { resolveOrgId } from './apollo.js';
 import { findPeople, searchAbort } from './finder.js';
-import { appendApplication } from './sheets.js';
+import { appendApplication, checkGoogleAuth } from './sheets.js';
 import { classifyTitleRoleStack, generateDomainLabel, normalizeLocation, generateConnectMessage } from './llm.js';
 import { STACK_EXAMPLES, DOMAIN_EXAMPLES, ROLE_OPTIONS } from './config.js';
 import { lookupJob } from './jobright.js';
@@ -114,6 +114,15 @@ async function main() {
   }
   if (!sessionExists('apollo')) {
     console.error('[main] No Apollo session. Run: npm run auth -- --site apollo');
+    process.exit(1);
+  }
+
+  // ── STEP 0: Validate Google auth early ──────────────────────────
+  try {
+    await checkGoogleAuth();
+  } catch (err) {
+    console.error('[main] Google Sheets auth failed:', err.message);
+    console.error('[main] Run: npm run auth -- --site google');
     process.exit(1);
   }
 

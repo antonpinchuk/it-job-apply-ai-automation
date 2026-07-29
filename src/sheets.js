@@ -92,6 +92,16 @@ function parseSalary(desc) {
   return isHourly ? { annual: null, hourly: max } : { annual: max, hourly: null };
 }
 
+/**
+ * Validates Google auth early — call at startup to fail fast before the long search.
+ * Also warms up the sheet title cache.
+ */
+export async function checkGoogleAuth() {
+  const auth = getOAuth2Client();
+  const sheets = google.sheets({ version: 'v4', auth });
+  await getSheetTitle(sheets);
+}
+
 export async function appendApplication({ jobUrl, jobTitle, jobRole, companyName, linkedinCompanyUrl, domain, loc, referrers = [], salaryDesc = null }) {
   const auth = getOAuth2Client();
   const sheets = google.sheets({ version: 'v4', auth });
