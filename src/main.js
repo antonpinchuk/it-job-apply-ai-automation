@@ -318,10 +318,8 @@ async function main() {
 
     // ── STEP 9: Collect remaining LinkedIn profile tabs ────────────
     const allPages = linkedinCtx.pages();
-    const refPages = allPages.filter(p => p.url().includes('linkedin.com/in/'));
-    referrers = refPages.slice(0, 4).map(p => p.url());
-    console.log(`[main] Collected ${referrers.length} referrer(s):`);
-    referrers.forEach(u => console.log('  ' + u));
+    const refPages = allPages.filter(p => p.url().includes('linkedin.com/in/')).slice(0, 4);
+    console.log(`[main] Processing ${refPages.length} profile tab(s).`);
 
     // ── STEP 9c: Generate and fill connection messages ─────────────
     const US_STATE_ABBR = /^(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)$/;
@@ -330,9 +328,17 @@ async function main() {
 
     for (const refPage of refPages) {
       const profileUrl = refPage.url();
+      if (refPage.isClosed()) {
+        console.log(`[connect] Tab closed, skipping: ${profileUrl}`);
+        continue;
+      }
       console.log(`\n[connect] Processing: ${profileUrl}`);
 
-      const profileData = await scrapeProfileData(refPage);
+      const profileData = await scrapeProfileData(refPage).catch(err => {
+        console.log(`[connect] Scrape failed (tab closed?): ${err.message}`);
+        return null;
+      });
+      if (!profileData) continue;
       console.log(`[connect] Scraped:`, JSON.stringify(profileData));
 
       const pageTitle = await refPage.title().catch(() => '');
@@ -368,9 +374,20 @@ async function main() {
       }
       console.log(`[connect] Message (${msgText.length} chars): ${msgText}`);
 
-      const result = await fillConnectNote(refPage, msgText);
+      if (refPage.isClosed()) { console.log(`[connect] Tab closed before fill, skipping`); continue; }
+      const result = await fillConnectNote(refPage, msgText).catch(err => {
+        console.log(`[connect] Fill failed (tab closed?): ${err.message}`); return 'error';
+      });
       console.log(`[connect] Result: ${result}`);
     }
+
+    // Collect referrers from tabs still open after messaging
+    referrers = linkedinCtx.pages()
+      .filter(p => !p.isClosed() && p.url().includes('linkedin.com/in/'))
+      .slice(0, 4)
+      .map(p => p.url());
+    console.log(`[main] Referrers to log (${referrers.length}):`);
+    referrers.forEach(u => console.log('  ' + u));
   } else {
     console.log('[main] --no-referrers: skipping search and LinkedIn messages.');
   }
