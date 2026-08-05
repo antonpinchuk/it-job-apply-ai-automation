@@ -51,14 +51,22 @@ export async function resolveOrgId(page, linkedinUrl, { id, name } = {}) {
         const res = await fetch(`/api/v1/organizations/${id}`, {
           headers: { 'x-csrf-token': csrf, 'x-accept-language': 'en' },
         });
-        return res.json();
+        const text = await res.text();
+        try { return JSON.parse(text); } catch { return { _raw: text.slice(0, 200) }; }
       },
       { id, csrf }
     );
+    if (data._raw !== undefined || !data.organization) {
+      const hint = data._raw ?? JSON.stringify(data).slice(0, 200);
+      if (/invalid.*(access|token|session)/i.test(hint)) {
+        throw new Error('[apollo] Session expired — run: npm run auth -- --site apollo');
+      }
+      console.error(`[apollo] ID lookup unexpected response:`, hint);
+      throw new Error(`[apollo] Organization not found by ID: ${id}`);
+    }
     const org = data.organization;
-    const orgName = org?.name || id;
-    console.log(`[apollo] Using org: "${orgName}" → ${id}`);
-    return { id, name: orgName, linkedinUrl: org?.linkedin_url || null };
+    console.log(`[apollo] Using org: "${org.name}" → ${id}`);
+    return { id, name: org.name, linkedinUrl: org.linkedin_url || null };
   }
 
   const slug = linkedinUrl ? linkedinUrl.replace(/\/$/, '').split('/').pop().toLowerCase() : null;
@@ -72,10 +80,18 @@ export async function resolveOrgId(page, linkedinUrl, { id, name } = {}) {
         `/api/v1/organizations/search?q_organization_fuzzy_name=${encodeURIComponent(query)}&display_mode=fuzzy_select_mode&per_page=25`,
         { headers: { 'x-csrf-token': csrf, 'x-accept-language': 'en' } }
       );
-      return res.json();
+      const text = await res.text();
+      try { return JSON.parse(text); } catch { return { _raw: text.slice(0, 200) }; }
     },
     { query, csrf }
   );
+
+  if (data._raw !== undefined) {
+    if (/invalid.*(access|token|session)/i.test(data._raw)) {
+      throw new Error('[apollo] Session expired — run: npm run auth -- --site apollo');
+    }
+    throw new Error(`[apollo] Unexpected response: ${data._raw}`);
+  }
 
   const orgs = data.organizations || [];
   if (!orgs.length) throw new Error(`[apollo] Company not found: "${query}"`);

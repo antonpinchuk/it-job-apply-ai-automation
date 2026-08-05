@@ -32,7 +32,9 @@ function today() {
 }
 
 function hyperlink(url, text) {
-  const safeUrl = (url || '').replace(/"/g, '%22');
+  if (!url && !text) return '';
+  if (!url) return text;
+  const safeUrl = url.replace(/"/g, '%22');
   const safeText = (text || '').replace(/"/g, '""');
   return `=HYPERLINK("${safeUrl}";"${safeText}")`;
 }

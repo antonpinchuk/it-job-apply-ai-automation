@@ -5,16 +5,17 @@
 import 'dotenv/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import readline from 'readline';
 import { applySession, saveSession, sessionExists } from './session.js';
 import { isLoggedOut } from './auth.js';
 import { resolveOrgId } from './apollo.js';
 import { findPeople, searchAbort } from './finder.js';
 import { appendApplication, checkGoogleAuth } from './sheets.js';
-import { classifyTitleRoleStack, generateDomainLabel, normalizeLocation, generateConnectMessage } from './llm.js';
+import { classifyTitleRoleStack, generateDomainLabel, normalizeLocation, generateConnectMessage, extractJobInfoFromPage } from './llm.js';
 import { STACK_EXAMPLES, DOMAIN_EXAMPLES, ROLE_OPTIONS } from './config.js';
 import { lookupJob } from './jobright.js';
 import { scrapeProfileData, fillConnectNote } from './linkedin.js';
+import fs from 'fs';
+import { execFileSync } from 'child_process';
 
 chromium.use(StealthPlugin());
 
@@ -22,13 +23,18 @@ const APOLLO_URL = 'https://app.apollo.io';
 const TABS_TO_OPEN = 5;
 
 function ask(prompt) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
-  return new Promise(resolve => rl.question(prompt, ans => { rl.close(); resolve(ans.trim()); }));
+  process.stdout.write(prompt);
+  try {
+    const line = execFileSync('bash', ['-c', 'read line </dev/tty && echo "$line"'], { encoding: 'utf8' });
+    return Promise.resolve(line.trimEnd().replace(/\r$/, ''));
+  } catch {
+    return Promise.resolve('');
+  }
 }
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  let jobUrl = null, role = 'DevOps', apolloId = null;
+  let jobUrl = null, role = 'DevOps', apolloId = null, noReferrers = false;
   for (let i = 0; i < args.length; i++) {
     const eqRole = args[i].match(/^--role=(.+)$/);
     const eqId   = args[i].match(/^--id=(.+)$/);
@@ -36,9 +42,10 @@ function parseArgs() {
     else if (args[i] === '--role' && args[i + 1]) { role = args[++i]; }
     else if (eqId) { apolloId = eqId[1]; }
     else if (args[i] === '--id' && args[i + 1]) { apolloId = args[++i]; }
+    else if (args[i] === '--no-referrers' || args[i] === '--nr') { noReferrers = true; }
     else if (!args[i].startsWith('--')) { jobUrl = args[i]; }
   }
-  return { jobUrl, role, apolloId };
+  return { jobUrl, role, apolloId, noReferrers };
 }
 
 /**
@@ -102,7 +109,7 @@ async function cascadeSearch(apolloPage, orgId, role) {
 }
 
 async function main() {
-  const { jobUrl, role, apolloId } = parseArgs();
+  const { jobUrl, role, apolloId, noReferrers } = parseArgs();
   if (!jobUrl) {
     console.error('Usage: npm run start -- <job-page-url>');
     process.exit(1);
@@ -161,20 +168,32 @@ async function main() {
     companyCategories = jobrightData.companyCategories;
     salaryDesc        = jobrightData.salaryDesc;
   } else {
-    console.log('[main] Jobright lookup failed — enter manually:');
-    companyName  = await ask('Company name: ');
-    fullJobTitle = await ask('Full job title: ');
+    // Try to extract from the open job page before asking the user
+    const pageTitle = await jobPage.title().catch(() => '');
+    const h1 = await jobPage.evaluate(() =>
+      document.querySelector('h1')?.innerText?.trim() || ''
+    ).catch(() => '');
+    console.log(`[main] Page title: "${pageTitle}"  H1: "${h1}"`);
+
+    if (pageTitle || h1) {
+      const extracted = await extractJobInfoFromPage(pageTitle, h1);
+      companyName  = extracted.companyName;
+      fullJobTitle = extracted.jobTitle;
+    }
+
+    if (!companyName)  companyName  = await ask('Company name: ');
+    if (!fullJobTitle) fullJobTitle = await ask('Full job title: ');
   }
 
   // Classify role + stack via LLM in one call
   const { role: jobRole, stack: jobTitle } = await classifyTitleRoleStack(fullJobTitle, ROLE_OPTIONS, STACK_EXAMPLES);
 
   // ── STEP 4: Find company in Apollo ──────────────────────────────
-  let orgId, orgName, linkedinCompanyUrl;
+  let orgId = null, orgName = companyName || null, linkedinCompanyUrl = null;
   if (apolloId) {
     const org = await resolveOrgId(apolloPage, null, { id: apolloId });
     orgId = org.id; orgName = org.name; linkedinCompanyUrl = org.linkedinUrl;
-  } else {
+  } else if (companyName) {
     let searchName = companyName;
     while (true) {
       try {
@@ -183,171 +202,188 @@ async function main() {
         orgName = org.name;
         linkedinCompanyUrl = org.linkedinUrl;
         break;
-      } catch {
+      } catch (err) {
+        if (/session expired/i.test(err.message)) {
+          console.error(`[main] ${err.message}`);
+          await linkedinBrowser.close(); await apolloBrowser.close(); process.exit(1);
+        }
         const retry = await ask(
           `[main] Apollo: "${searchName}" not found.\n` +
-          `       Enter different company name, Apollo org ID, or leave blank to skip: `
+          `       Enter company name, Apollo org ID, or leave blank to skip Apollo: `
         );
-        if (!retry) { await linkedinBrowser.close(); await apolloBrowser.close(); process.exit(0); }
+        if (!retry) {
+          console.log('[main] Skipping Apollo — will log to sheet without referrers.');
+          break;
+        }
         // Support direct ID input (24-char hex)
         if (/^[a-f0-9]{24}$/i.test(retry)) {
           try {
             const org = await resolveOrgId(apolloPage, null, { id: retry });
             orgId = org.id; orgName = org.name; linkedinCompanyUrl = org.linkedinUrl;
             break;
-          } catch { /* fall through to retry loop */ }
+          } catch (idErr) {
+            if (/session expired/i.test(idErr.message)) {
+              console.error(`[main] ${idErr.message}`);
+              await linkedinBrowser.close(); await apolloBrowser.close(); process.exit(1);
+            }
+            console.error(`[main] Apollo ID lookup failed: ${idErr.message}`);
+          }
         }
         searchName = retry;
       }
     }
-  }
-
-  if (!linkedinCompanyUrl) {
-    linkedinCompanyUrl = `https://www.linkedin.com/company/${orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-    console.log(`[main] Apollo had no LinkedIn URL, using: ${linkedinCompanyUrl}`);
+  } else {
+    console.log('[main] No company name — skipping Apollo.');
   }
 
   // ── STEP 5: Open LinkedIn company page ──────────────────────────
-  const coPage = await linkedinCtx.newPage();
-  await coPage.goto(linkedinCompanyUrl, { waitUntil: 'domcontentloaded' });
-  console.log(`[main] Opened company page: ${linkedinCompanyUrl}`);
-
-  // ── STEP 6: Cascade search ───────────────────────────────────────
-  console.log(`\n[main] Searching "${orgName}" (role: ${role})...`);
-  console.log('[search] Press Enter at any time to stop search and continue with open tabs.');
-  // Read a single Enter from stdin in parallel with the search — abort when it arrives
-  const stopSearch = new Promise(resolve => {
-    process.stdin.resume();
-    process.stdin.setEncoding('utf8');
-    process.stdin.once('data', () => { process.stdin.pause(); resolve(); });
-  });
-  stopSearch.then(() => {
-    if (!searchAbort.signal.aborted) {
-      searchAbort.abort();
-      console.log('\n[search] Stopped — will continue with manually opened tabs.');
-    }
-  });
-  const { toOpen, allResults, allMaybes } = await cascadeSearch(apolloPage, orgId, role);
-  // Drain anything typed during the search so it doesn't bleed into the next ask()
-  process.stdin.resume();
-  process.stdin.setEncoding('utf8');
-  process.stdin.removeAllListeners('data');
-  await new Promise(resolve => setTimeout(resolve, 50));
-  process.stdin.pause();
-
-  if (searchAbort.signal.aborted) {
-    console.log('[search] Search was interrupted early.');
-  }
-  if (!toOpen.length) {
-    console.log('[main] No people found via Apollo. Continuing with manually opened tabs.');
+  let coPage = null;
+  if (linkedinCompanyUrl) {
+    coPage = await linkedinCtx.newPage();
+    await coPage.goto(linkedinCompanyUrl, { waitUntil: 'domcontentloaded' });
+    console.log(`[main] Opened company page: ${linkedinCompanyUrl}`);
+  } else {
+    console.log('[main] No LinkedIn company URL — skipping company page.');
   }
 
-  // ── STEP 7: Open up to 5 LinkedIn tabs ──────────────────────────
-  for (const url of toOpen) {
-    const tab = await linkedinCtx.newPage();
-    await tab.goto(url, { waitUntil: 'domcontentloaded' });
-  }
-  console.log(`\n[main] Opened ${toOpen.length} tabs (${allResults.length} confirmed, ${Math.min(allMaybes.length, TABS_TO_OPEN - allResults.length)} maybes)`);
-
-  // ── STEP 8: User reviews and closes unwanted tabs ────────────────
-  await ask(
-    `\n[main] Review the tabs. Close profiles you don't want to message.\n` +
-    `       Keep up to 4 LinkedIn profile tabs.\n` +
-    `       Press Enter when ready...\n`
-  );
-
-  // ── STEP 9: Collect remaining LinkedIn profile tabs ──────────────
-  const allPages = linkedinCtx.pages();
-  const refPages = allPages.filter(p => p.url().includes('linkedin.com/in/'));
-  const referrers = refPages.slice(0, 4).map(p => p.url());
-  console.log(`[main] Collected ${referrers.length} referrer(s):`);
-  referrers.forEach(u => console.log('  ' + u));
-
-  // ── STEP 9b: Domain + location (needed before connect messages) ──
-  let domain, isMedtech = false;
+  // ── STEP 9b: Domain + location ──────────────────────────────────
+  let domain = '', isMedtech = false, loc = '';
   if (companyCategories) {
     const domainResult = await generateDomainLabel(companyCategories, DOMAIN_EXAMPLES);
     domain = domainResult.label;
     isMedtech = domainResult.isMedtech;
-  } else {
-    domain = await ask('Domain (1 word, e.g. fintech, healthcare, AI): ');
   }
 
-  const aboutUrl = linkedinCompanyUrl.replace(/\/?$/, '') + '/about/';
-  await coPage.goto(aboutUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
-  const rawLoc = await coPage.evaluate(() => {
-    for (const dt of document.querySelectorAll('dt')) {
-      if (/^\s*headquarters\s*$/i.test(dt.textContent)) {
-        const dd = dt.nextElementSibling;
-        if (dd?.textContent?.trim()) return dd.textContent.trim();
+  if (coPage) {
+    const aboutUrl = linkedinCompanyUrl.replace(/\/?$/, '') + '/about/';
+    await coPage.goto(aboutUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    const rawLoc = await coPage.evaluate(() => {
+      for (const dt of document.querySelectorAll('dt')) {
+        if (/^\s*headquarters\s*$/i.test(dt.textContent)) {
+          const dd = dt.nextElementSibling;
+          if (dd?.textContent?.trim()) return dd.textContent.trim();
+        }
       }
-    }
-    return null;
-  }).catch(() => null);
-  console.log(`[main] Raw location: ${rawLoc ?? '(not found)'}`);
-  const loc = rawLoc
-    ? await normalizeLocation(rawLoc)
-    : await ask('Location (e.g. Toronto, US, Vancouver): ');
+      return null;
+    }).catch(() => null);
+    console.log(`[main] Raw location: ${rawLoc ?? '(not found)'}`);
+    if (rawLoc) loc = await normalizeLocation(rawLoc);
+  }
 
-  const US_STATE_ABBR = /^(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)$/;
-  const US_LOCS_RE = /\b(US|United States|California|New York|Texas|Washington|Illinois|Georgia|Florida|Massachusetts|Colorado|Oregon|Ohio|Michigan|Virginia|Pennsylvania|Arizona|Minnesota|North Carolina|Nevada|Utah|Tennessee|Indiana|Wisconsin|Connecticut|Maryland|Missouri|Kentucky|Alabama|Louisiana|Oklahoma|Kansas|Iowa|Arkansas|Mississippi|Nebraska|Idaho|New Mexico|Hawaii|Maine|New Hampshire|Vermont|Rhode Island|Delaware|Montana|Wyoming|Alaska|South Dakota|North Dakota|West Virginia|South Carolina)\b/i;
-  const isUSCompany = US_LOCS_RE.test(loc) || US_STATE_ABBR.test(loc?.trim());
+  let referrers = [];
 
-  // ── STEP 9c: Generate and fill connection messages ────────────────
-  for (const refPage of refPages) {
-    const profileUrl = refPage.url();
-    console.log(`\n[connect] Processing: ${profileUrl}`);
-
-    const profileData = await scrapeProfileData(refPage);
-    console.log(`[connect] Scraped:`, JSON.stringify(profileData));
-
-    const pageTitle = await refPage.title().catch(() => '');
-    const personName = pageTitle.replace(/\s*\|.*$/, '').trim() || 'this person';
-
-    // Find Apollo data for this person to get title + nameOrigin
-    const vanity = profileUrl.replace(/.*\/in\//, '').replace(/\/?$/, '').replace(/\?.*$/, '');
-    const apolloPerson = [...allResults, ...allMaybes].find(p =>
-      p.linkedinUrl?.includes(vanity)
-    );
-    // Title from Experience section of target company takes priority over Apollo
-    const personTitle = profileData?.currentCompanyTitle || apolloPerson?.title || '';
-    const nameOrigin = apolloPerson?.nameOrigin || 'other';
-
-    const msgText = await generateConnectMessage({
-      name: personName,
-      title: personTitle,
-      companyName: orgName,
-      jobTitle,
-      jobRole,
-      nameOrigin,
-      university: profileData?.university || null,
-      location: profileData?.location || null,
-      profileAbout: profileData?.about || null,
-      currentJobDesc: profileData?.currentJobDesc || null,
-      isMedtech,
-      isUSCompany,
-      hasUkrainian: profileData?.hasUkrainian || false,
-      hasRussian: profileData?.hasRussian || false,
+  if (!noReferrers && orgId) {
+    // ── STEP 6: Cascade search ─────────────────────────────────────
+    console.log(`\n[main] Searching "${orgName}" (role: ${role})...`);
+    console.log('[search] Press Enter at any time to stop search and continue with open tabs.');
+    const stopSearch = new Promise(resolve => {
+      process.stdin.resume();
+      process.stdin.setEncoding('utf8');
+      process.stdin.once('data', () => { process.stdin.pause(); resolve(); });
     });
+    stopSearch.then(() => {
+      if (!searchAbort.signal.aborted) {
+        searchAbort.abort();
+        console.log('\n[search] Stopped — will continue with manually opened tabs.');
+      }
+    });
+    const { toOpen, allResults, allMaybes } = await cascadeSearch(apolloPage, orgId, role);
+    // Drain anything typed during the search so it doesn't bleed into the next ask()
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+    process.stdin.removeAllListeners('data');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    process.stdin.pause();
 
-    if (!msgText) {
-      console.log(`[connect] No message generated for ${personName}, skipping`);
-      continue;
+    if (searchAbort.signal.aborted) {
+      console.log('[search] Search was interrupted early.');
     }
-    console.log(`[connect] Message (${msgText.length} chars): ${msgText}`);
+    if (!toOpen.length) {
+      console.log('[main] No people found via Apollo. Continuing with manually opened tabs.');
+    }
 
-    const result = await fillConnectNote(refPage, msgText);
-    console.log(`[connect] Result: ${result}`);
+    // ── STEP 7: Open up to 5 LinkedIn tabs ────────────────────────
+    for (const url of toOpen) {
+      const tab = await linkedinCtx.newPage();
+      await tab.goto(url, { waitUntil: 'domcontentloaded' });
+    }
+    console.log(`\n[main] Opened ${toOpen.length} tabs (${allResults.length} confirmed, ${Math.min(allMaybes.length, TABS_TO_OPEN - allResults.length)} maybes)`);
+
+    // ── STEP 8: User reviews and closes unwanted tabs ──────────────
+    await ask(
+      `\n[main] Review the tabs. Close profiles you don't want to message.\n` +
+      `       Keep up to 4 LinkedIn profile tabs.\n` +
+      `       Press Enter when ready...\n`
+    );
+
+    // ── STEP 9: Collect remaining LinkedIn profile tabs ────────────
+    const allPages = linkedinCtx.pages();
+    const refPages = allPages.filter(p => p.url().includes('linkedin.com/in/'));
+    referrers = refPages.slice(0, 4).map(p => p.url());
+    console.log(`[main] Collected ${referrers.length} referrer(s):`);
+    referrers.forEach(u => console.log('  ' + u));
+
+    // ── STEP 9c: Generate and fill connection messages ─────────────
+    const US_STATE_ABBR = /^(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)$/;
+    const US_LOCS_RE = /\b(US|United States|California|New York|Texas|Washington|Illinois|Georgia|Florida|Massachusetts|Colorado|Oregon|Ohio|Michigan|Virginia|Pennsylvania|Arizona|Minnesota|North Carolina|Nevada|Utah|Tennessee|Indiana|Wisconsin|Connecticut|Maryland|Missouri|Kentucky|Alabama|Louisiana|Oklahoma|Kansas|Iowa|Arkansas|Mississippi|Nebraska|Idaho|New Mexico|Hawaii|Maine|New Hampshire|Vermont|Rhode Island|Delaware|Montana|Wyoming|Alaska|South Dakota|North Dakota|West Virginia|South Carolina)\b/i;
+    const isUSCompany = US_LOCS_RE.test(loc) || US_STATE_ABBR.test(loc?.trim());
+
+    for (const refPage of refPages) {
+      const profileUrl = refPage.url();
+      console.log(`\n[connect] Processing: ${profileUrl}`);
+
+      const profileData = await scrapeProfileData(refPage);
+      console.log(`[connect] Scraped:`, JSON.stringify(profileData));
+
+      const pageTitle = await refPage.title().catch(() => '');
+      const personName = pageTitle.replace(/\s*\|.*$/, '').trim() || 'this person';
+
+      const vanity = profileUrl.replace(/.*\/in\//, '').replace(/\/?$/, '').replace(/\?.*$/, '');
+      const apolloPerson = [...allResults, ...allMaybes].find(p =>
+        p.linkedinUrl?.includes(vanity)
+      );
+      const personTitle = profileData?.currentCompanyTitle || apolloPerson?.title || '';
+      const nameOrigin = apolloPerson?.nameOrigin || 'other';
+
+      const msgText = await generateConnectMessage({
+        name: personName,
+        title: personTitle,
+        companyName: orgName,
+        jobTitle,
+        jobRole,
+        nameOrigin,
+        university: profileData?.university || null,
+        location: profileData?.location || null,
+        profileAbout: profileData?.about || null,
+        currentJobDesc: profileData?.currentJobDesc || null,
+        isMedtech,
+        isUSCompany,
+        hasUkrainian: profileData?.hasUkrainian || false,
+        hasRussian: profileData?.hasRussian || false,
+      });
+
+      if (!msgText) {
+        console.log(`[connect] No message generated for ${personName}, skipping`);
+        continue;
+      }
+      console.log(`[connect] Message (${msgText.length} chars): ${msgText}`);
+
+      const result = await fillConnectNote(refPage, msgText);
+      console.log(`[connect] Result: ${result}`);
+    }
+  } else {
+    console.log('[main] --no-referrers: skipping search and LinkedIn messages.');
   }
 
   // ── STEP 10: Write to Google Sheet ──────────────────────────────
-  console.log('[main] Sheet data:', { jobTitle, jobRole, companyName: orgName, domain, loc, referrers });
+  const sheetJobTitle = jobTitle || 'Engineer';
+  console.log('[main] Sheet data:', { jobTitle: sheetJobTitle, jobRole, companyName: orgName, domain, loc, referrers });
   await appendApplication({
     jobUrl,
-    jobTitle,
+    jobTitle: sheetJobTitle,
     jobRole,
-    companyName: orgName,
-    linkedinCompanyUrl,
+    companyName: orgName || '',
+    linkedinCompanyUrl: linkedinCompanyUrl || '',
     domain,
     loc,
     referrers,

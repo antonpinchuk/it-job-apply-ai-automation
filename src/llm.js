@@ -108,6 +108,33 @@ Only JSON, no explanation outside JSON.
 }
 
 /**
+ * Extract company name and job title from a job page's title + H1 text.
+ * Returns null for either field if the LLM can't determine it.
+ * @param {string} pageTitle  document.title
+ * @param {string} h1         first H1 text on the page
+ * @returns {Promise<{companyName: string|null, jobTitle: string|null}>}
+ */
+export async function extractJobInfoFromPage(pageTitle, h1) {
+  const result = await ask(`
+Extract the job title and company name from this job posting page.
+
+Page title: "${pageTitle}"
+H1 heading: "${h1}"
+
+Return only JSON: {"jobTitle": "...", "companyName": "..."}
+
+Rules:
+- jobTitle: the exact job role being advertised (e.g. "Software Engineer, Infrastructure")
+- companyName: the hiring company (e.g. "Airbnb"). Do not include Inc/Corp/Ltd suffixes.
+- If you cannot determine a field with confidence, set it to null.
+  `.trim());
+  const jobTitle    = result.jobTitle?.trim()    || null;
+  const companyName = result.companyName?.trim() || null;
+  console.log(`[llm] Page extract → company="${companyName}" title="${jobTitle}"`);
+  return { companyName, jobTitle };
+}
+
+/**
  * Classify job title into Role + Stack in one LLM call.
  *
  * @param {string} title       full job title
