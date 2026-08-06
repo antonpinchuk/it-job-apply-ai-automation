@@ -410,7 +410,13 @@ async function main() {
   await saveSession('apollo', apolloCtx, apolloPage);
 
   // ── STEP 11: Final confirmation ──────────────────────────────────
-  await ask('\n[main] Entry added to sheet. Verify it, then press Enter to close...\n');
+  process.stdout.write('\n[main] Entry added to sheet. Verify it, then press any key to close...\n');
+  try {
+    execFileSync('python3', ['-c', 'import tty,sys,termios; fd=open("/dev/tty","rb"); tty.setraw(fd.fileno()); fd.read(1); termios.tcsetattr(fd.fileno(), termios.TCSADRAIN, termios.tcgetattr(fd))']);
+  } catch {
+    // fallback: just wait 5 seconds
+    await new Promise(r => setTimeout(r, 5000));
+  }
 
   await linkedinBrowser.close();
   await apolloBrowser.close();
