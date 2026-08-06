@@ -117,16 +117,19 @@ Sessions are saved to `.session/`:
 ## Usage
 
 ```bash
-npm run start -- <job-page-url> [--role DevOps] [--id <apollo-org-id>]
+npm run start -- <job-page-url> [--role DevOps] [--id <apollo-org-id>] [--no-referrers]
 ```
 
 ```bash
 npm run start -- "https://job-boards.greenhouse.io/sony/jobs/123"
 npm run start -- "https://boards.greenhouse.io/example/jobs/456" --role Backend
 npm run start -- "https://jobs.ashbyhq.com/olix/..." --id=671746ce96937600016e7c2e
+npm run start -- "https://job-boards.greenhouse.io/sony/jobs/123" --no-referrers
 ```
 
 `--id` skips the Apollo company name search and uses the given org ID directly — useful when the URL is not from Jobright and Apollo picks the wrong company from the name.
+
+`--no-referrers` (alias `--nr`) skips the referrer search and LinkedIn connection messages entirely — logs the application to Google Sheets immediately after fetching job info.
 
 The script pauses twice:
 1. After opening profiles — close unwanted tabs, keep up to 4, press Enter
