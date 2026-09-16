@@ -136,7 +136,7 @@ async function main() {
   // ── STEP 1: Open two browsers ────────────────────────────────────
   console.log('[main] Starting browsers...');
 
-  const linkedinBrowser = await chromium.launch({ headless: false, channel: 'chrome' });
+  const linkedinBrowser = await chromium.launch({ headless: noReferrers, channel: 'chrome' });
   const linkedinCtx = await linkedinBrowser.newContext();
   await applySession('linkedin', linkedinCtx);
 
@@ -366,6 +366,9 @@ async function main() {
         isUSCompany,
         hasUkrainian: profileData?.hasUkrainian || false,
         hasRussian: profileData?.hasRussian || false,
+        gender: apolloPerson?.gender || 'unknown',
+        roleMatch: apolloPerson?.roleMatch,
+        roleConfidence: apolloPerson?.roleConfidence,
       });
 
       if (!msgText) {
@@ -380,6 +383,12 @@ async function main() {
       });
       console.log(`[connect] Result: ${result}`);
     }
+
+    // ── STEP 9d: User reviews and sends the filled invites ─────────
+    await ask(
+      `\n[main] Messages filled. Review and send each invite manually.\n` +
+      `       Press Enter when done...\n`
+    );
 
     // Collect referrers from tabs still open after messaging
     referrers = linkedinCtx.pages()
@@ -409,14 +418,7 @@ async function main() {
 
   await saveSession('apollo', apolloCtx, apolloPage);
 
-  // ── STEP 11: Final confirmation ──────────────────────────────────
-  process.stdout.write('\n[main] Entry added to sheet. Verify it, then press any key to close...\n');
-  try {
-    execFileSync('python3', ['-c', 'import tty,sys,termios; fd=open("/dev/tty","rb"); tty.setraw(fd.fileno()); fd.read(1); termios.tcsetattr(fd.fileno(), termios.TCSADRAIN, termios.tcgetattr(fd))']);
-  } catch {
-    // fallback: just wait 5 seconds
-    await new Promise(r => setTimeout(r, 5000));
-  }
+  console.log('[main] Entry added to sheet.');
 
   await linkedinBrowser.close();
   await apolloBrowser.close();

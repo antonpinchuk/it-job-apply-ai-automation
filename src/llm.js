@@ -59,12 +59,13 @@ async function ask(prompt, { strong = false, maxTokens = 100 } = {}) {
  *   isUkrOrRus: boolean,
  *   nameConfidence: 'high'|'medium'|'low',
  *   roleMatch: boolean,
- *   roleConfidence: 'high'|'medium'|'low'
+ *   roleConfidence: 'high'|'medium'|'low',
+ *   gender: 'male'|'female'|'unknown'
  * }}
  */
 export async function classifyPerson(name, title, role) {
   if (!name?.trim()) {
-    return { isUkrOrRus: false, nameConfidence: 'low', roleMatch: false, roleConfidence: 'low' };
+    return { isUkrOrRus: false, nameConfidence: 'low', roleMatch: false, roleConfidence: 'low', gender: 'unknown' };
   }
   const result = await ask(`
 Analyze this person for a referral opportunity on a ${role} team.
@@ -77,11 +78,17 @@ Answer in JSON:
   "nameOrigin": "ukrainian" | "russian" | "other",
   "nameConfidence": "high" | "medium" | "low",
   "roleMatch": true | false,
-  "roleConfidence": "high" | "medium" | "low"
+  "roleConfidence": "high" | "medium" | "low",
+  "gender": "male" | "female" | "unknown"
 }
 
 nameOrigin: Is the name of Ukrainian or Russian origin?
-roleMatch: Does their title suggest they work in ${role} or a closely related area (same technical domain)?
+roleMatch + roleConfidence: Does their title suggest they are a hands-on IC on the ${role} team specifically (same team/specialization AND same individual-contributor level)?
+- Titles that are CLEARLY a different specialization (e.g. for target "DevOps": QA Engineer, Backend Engineer, Mobile Engineer, MLOps Engineer, Data Engineer, Frontend Engineer) → roleMatch=false, roleConfidence=high.
+- Management, director/VP, or recruiting/talent-acquisition titles (e.g. Engineering Manager, Director of Engineering, VP Engineering, Head of X, Technical Recruiter, Talent Acquisition) → roleMatch=false, roleConfidence=high, REGARDLESS of domain — they are not "on the team" as a peer even if they oversee or hire for it.
+- Titles that clearly match the specialization AND are hands-on IC roles (e.g. for "DevOps": Site Reliability Engineer, Cloud Engineer, Platform Engineer, Infrastructure Engineer, DevOps Engineer) → roleMatch=true, roleConfidence=high.
+- Generic/ambiguous IC titles that don't reveal a specialization (e.g. "Software Engineer", "Engineer", "SWE", "Senior Engineer" with no other signal) → roleMatch=true, roleConfidence=low. Do NOT treat a generic title as a mismatch — it might well be the same specialization, we just can't tell from the title alone.
+gender: Infer from the first name. If genuinely ambiguous or unknown, use "unknown".
 Only JSON, no explanation.
   `.trim());
 
@@ -90,8 +97,9 @@ Only JSON, no explanation.
   const nameConfidence = result.nameConfidence || 'low';
   const roleMatch = result.roleMatch === true;
   const roleConfidence = result.roleConfidence || 'low';
-  console.log(`[llm] "${name}" (${title || '?'}) → origin=${nameOrigin}(${nameConfidence}) role=${roleMatch}(${roleConfidence})`);
-  return { nameOrigin, isUkrOrRus, nameConfidence, roleMatch, roleConfidence };
+  const gender = result.gender || 'unknown';
+  console.log(`[llm] "${name}" (${title || '?'}) → origin=${nameOrigin}(${nameConfidence}) role=${roleMatch}(${roleConfidence}) gender=${gender}`);
+  return { nameOrigin, isUkrOrRus, nameConfidence, roleMatch, roleConfidence, gender };
 }
 
 export async function isUkrOrRusEmployer(employers, name) {
@@ -295,26 +303,28 @@ Only JSON.
 }
 
 /**
- * LLM-based title match: does recipient's title suggest the same role as the vacancy?
+ * LLM-based title match: does recipient's title suggest the SAME specialization as the vacancy?
+ * Used only as a fallback when no Apollo-derived roleMatch/roleConfidence is available.
  * @param {string} recipientTitle
  * @param {string} jobRole  e.g. "DevOps"
- * @returns {Promise<boolean>}
+ * @returns {Promise<{match: boolean, confidence: 'high'|'medium'|'low'}>}
  */
 async function titleMatchesJobRole(recipientTitle, jobRole) {
-  if (!recipientTitle?.trim() || !jobRole?.trim()) return false;
+  if (!recipientTitle?.trim() || !jobRole?.trim()) return { match: false, confidence: 'low' };
   const result = await ask(`
-Does this person's job title suggest they work in the same department/area as the role we're hiring for?
+Does this person's job title suggest they are a hands-on IC on the ${jobRole} team specifically (same team/specialization AND same individual-contributor level), not just a broader engineering department?
 
 Person's title: "${recipientTitle}"
 Hiring role: "${jobRole}"
 
-Use semantic similarity. Examples for DevOps:
-- MATCH: Site Reliability Engineer, Cloud Engineer, Platform Engineer, Infrastructure Engineer, DevEx Engineer, CI/CD Engineer
-- NO MATCH: Android Developer, iOS Developer, Mobile Engineer, Backend Engineer, Frontend Engineer, Full-stack Engineer, Engineering Manager, Data Scientist
+- Titles that are CLEARLY a different specialization (e.g. for target "DevOps": QA Engineer, Backend Engineer, Mobile Engineer, MLOps Engineer, Data Engineer, Frontend Engineer) → match=false, confidence=high.
+- Management, director/VP, or recruiting/talent-acquisition titles (e.g. Engineering Manager, Director of Engineering, VP Engineering, Head of X, Technical Recruiter, Talent Acquisition) → match=false, confidence=high, REGARDLESS of domain — they are not "on the team" as a peer even if they oversee or hire for it.
+- Titles that clearly match the specialization AND are hands-on IC roles (e.g. for "DevOps": Site Reliability Engineer, Cloud Engineer, Platform Engineer, Infrastructure Engineer, DevOps Engineer) → match=true, confidence=high.
+- Generic/ambiguous IC titles that don't reveal a specialization (e.g. "Software Engineer", "Engineer", "SWE") → match=true, confidence=low. Do NOT treat a generic title as a mismatch.
 
-Return JSON: {"match": true | false}
+Return JSON: {"match": true | false, "confidence": "high" | "medium" | "low"}
   `.trim());
-  return result.match === true;
+  return { match: result.match === true, confidence: result.confidence || 'low' };
 }
 
 /**
@@ -335,6 +345,9 @@ Return JSON: {"match": true | false}
  *   isUSCompany?: boolean,
  *   hasUkrainian?: boolean,
  *   hasRussian?: boolean,
+ *   gender?: 'male'|'female'|'unknown',
+ *   roleMatch?: boolean,
+ *   roleConfidence?: 'high'|'medium'|'low',
  * }} data
  * @returns {Promise<string>}  The message text (~300 chars)
  */
@@ -344,14 +357,22 @@ export async function generateConnectMessage(data) {
     nameOrigin, university, location, profileAbout, currentJobDesc,
     isMedtech = false, isUSCompany = false,
     hasUkrainian = false, hasRussian = false,
+    gender = 'unknown', roleMatch: apolloRoleMatch, roleConfidence: apolloRoleConfidence,
   } = data;
 
   // ── Parallel: university location + person location + title match ─────────
-  const [uniLoc, personLoc, titleMatch] = await Promise.all([
+  // Prefer the roleMatch/roleConfidence already computed from Apollo (finder.js) —
+  // only fall back to a fresh LLM call when the recipient wasn't Apollo-classified
+  // (e.g. a profile tab opened manually).
+  const [uniLoc, personLoc, titleMatchResult] = await Promise.all([
     university ? classifyUniversityLocation(university) : Promise.resolve('Other'),
     location   ? classifyPersonLocation(location)       : Promise.resolve('Other'),
-    title      ? titleMatchesJobRole(title, jobRole)    : Promise.resolve(false),
+    apolloRoleMatch !== undefined
+      ? Promise.resolve({ match: apolloRoleMatch, confidence: apolloRoleConfidence || 'low' })
+      : title ? titleMatchesJobRole(title, jobRole) : Promise.resolve({ match: false, confidence: 'low' }),
   ]);
+  // Only use the "possibly even your team" personalization when we're confident.
+  const titleMatch = titleMatchResult.match && titleMatchResult.confidence === 'high';
 
   // Language: university location is primary signal.
   // If uni is unknown (Other), fall back to Languages section on their profile.
@@ -362,11 +383,14 @@ export async function generateConnectMessage(data) {
     : 'English';
 
   // ── Profile overlap hints (regex — fast, no extra LLM call) ───────────────
-  const profileText = [profileAbout, currentJobDesc, title].filter(Boolean).join(' ');
+  const profileText     = [profileAbout, currentJobDesc, title].filter(Boolean).join(' ');
+  const currentRoleText = [currentJobDesc, title].filter(Boolean).join(' ');
   const hasGamedev  = /game|unity|unreal|gamedev/i.test(profileText);
   const hasIoT      = /iot|embedded|device|firmware|hardware/i.test(profileText);
-  const hasMobile   = /mobile|android|ios|swift|kotlin/i.test(profileText);
-  const hasDevOps   = /devops|ci[\/ ]?cd|kubernetes|jenkins|pipeline|terraform/i.test(profileText);
+  // Mobile/DevOps overlap only counts if it's their CURRENT role — mentioning
+  // "I was also in mobile for 10 years" is odd if they moved to backend since.
+  const hasMobile   = /mobile|android|ios|swift|kotlin/i.test(currentRoleText);
+  const hasDevOps   = /devops|ci[\/ ]?cd|kubernetes|jenkins|pipeline|terraform/i.test(currentRoleText);
 
   // ── Customization hints (0-1 chosen by LLM) ───────────────────────────────
   const customizations = [
@@ -380,7 +404,7 @@ export async function generateConnectMessage(data) {
         : lang === 'Russian'  ? `Компания в US, контакт в Канаде — добавь "вижу ты из Канады работаешь на большую US компанию"`
         : `US company with Canadian employee — add "I see you're in Canada working for a big US company"`)
       : null,
-    personLoc === 'Toronto'
+    personLoc === 'Toronto' && gender === 'male'
       ? (lang === 'Ukrainian' ? `Живе в GTA — запропонуй "буду радий навіть зустрітись на каву в даунтауні"`
         : lang === 'Russian'  ? `Живёт в GTA — предложи встретиться на кофе`
         : `Lives in Toronto/GTA — offer to meet for coffee downtown`)
@@ -422,8 +446,8 @@ export async function generateConnectMessage(data) {
   ].filter(Boolean);
 
   const customizationBlock = customizations.length > 0
-    ? `Pick at most ONE personalization from this list. Tech/interest overlaps (medtech, gamedev, IoT, mobile, DevOps, skills) are more important than location hints — prefer them when both apply. Shorten other parts to fit within 300 chars.\n${customizations.map(c => `- ${c}`).join('\n')}`
-    : `No personalizations available — write the base message only.`;
+    ? `Pick at most ONE personalization from this list — this is the ONLY source of personalization, do not invent others from the About excerpt or elsewhere. Tech/interest overlaps (medtech, gamedev, IoT, mobile, DevOps, skills) are more important than location hints — prefer them when both apply. Shorten other parts to fit within 300 chars.\n${customizations.map(c => `- ${c}`).join('\n')}`
+    : `No personalizations available — write the base message only. Do NOT invent a personalization from the About excerpt.`;
 
   const langInstruction = lang === 'Ukrainian'
     ? `Write in UKRAINIAN. Simple conversational Ukrainian. Abbreviations like "проф." are fine. Friendly/informal tone. Can be slightly dramatic.`
@@ -438,7 +462,7 @@ Anton sees an interesting ${jobRole} opening at ${companyName} and is looking fo
 Recipient: ${title || 'employee'} at ${companyName}
 ${university ? `Their university: ${university} (location: ${uniLoc})` : ''}
 ${location   ? `Their location: ${location} (classified: ${personLoc})` : ''}
-${profileAbout ? `Their About (excerpt): ${profileAbout.slice(0, 200)}` : ''}
+${profileAbout ? `Their About (excerpt, for tone/language context ONLY — do NOT pull personalization facts from this, use only the Personalization list below): ${profileAbout.slice(0, 200)}` : ''}
 
 ${langInstruction}
 

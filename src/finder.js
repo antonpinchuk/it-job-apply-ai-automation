@@ -83,10 +83,10 @@ export async function findPeople(apolloPage, orgId, {
     for (const r of withEmployer) {
       if (!r.contact.linkedinUrl) continue;
       if (r.empMatch) {
-        results.push({ name: r.contact.name, title: r.contact.title, linkedinUrl: r.contact.linkedinUrl, confidence: r.nameConfidence, nameOrigin: r.nameOrigin });
+        results.push({ name: r.contact.name, title: r.contact.title, linkedinUrl: r.contact.linkedinUrl, confidence: r.nameConfidence, nameOrigin: r.nameOrigin, gender: r.gender, roleMatch: r.roleMatch, roleConfidence: r.roleConfidence });
         if (results.length >= maxResults) break outer;
       } else {
-        maybes.push({ name: r.contact.name, title: r.contact.title, linkedinUrl: r.contact.linkedinUrl, confidence: r.nameConfidence, nameOrigin: r.nameOrigin });
+        maybes.push({ name: r.contact.name, title: r.contact.title, linkedinUrl: r.contact.linkedinUrl, confidence: r.nameConfidence, nameOrigin: r.nameOrigin, gender: r.gender, roleMatch: r.roleMatch, roleConfidence: r.roleConfidence });
       }
     }
 
@@ -94,7 +94,7 @@ export async function findPeople(apolloPage, orgId, {
     for (const r of classified) {
       if (!r.contact.linkedinUrl) continue;
       if (!r.isUkrOrRus && r.roleMatch) {
-        byRole.push({ name: r.contact.name, title: r.contact.title, linkedinUrl: r.contact.linkedinUrl, confidence: r.roleConfidence, nameOrigin: 'other' });
+        byRole.push({ name: r.contact.name, title: r.contact.title, linkedinUrl: r.contact.linkedinUrl, confidence: r.roleConfidence, nameOrigin: 'other', gender: r.gender, roleMatch: r.roleMatch, roleConfidence: r.roleConfidence });
       }
     }
 
