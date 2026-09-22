@@ -4,7 +4,7 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import readline from 'readline';
 import http from 'http';
 import { exec } from 'child_process';
-import { saveSession } from './session.js';
+import { applySession, saveSession, sessionExists } from './session.js';
 
 chromium.use(StealthPlugin());
 
@@ -14,18 +14,59 @@ const SITE_URLS = {
   jobright: 'https://jobright.ai',
 };
 
+// Sites that use a persistent on-disk Chrome profile instead of cookie/localStorage
+// snapshots in .session/*.json. A real profile directory keeps httpOnly cookies
+// (including Cloudflare's clearance cookie) exactly like a normal browser would,
+// which a cookie-copy approach cannot reproduce. See PROFILE_DIRS export usage
+// in main.js.
+export const PROFILE_DIRS = {
+  apollo: '.apollo-profile',
+};
+
 function waitForEnter(prompt) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(resolve => rl.question(prompt, () => { rl.close(); resolve(); }));
 }
 
+async function authPersistent(site) {
+  const dir = PROFILE_DIRS[site];
+  console.log(`[auth] Opening persistent Chrome profile for ${site} at ${dir}...`);
+  const context = await chromium.launchPersistentContext(dir, {
+    headless: false,
+    channel: 'chrome',
+    ignoreDefaultArgs: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
+  });
+  const page = context.pages()[0] || await context.newPage();
+  await page.goto(SITE_URLS[site]);
+
+  await waitForEnter(
+    `\n[auth] Log in to ${site} if needed, then click around for a bit — open People search, ` +
+    `browse a page or two, scroll a list. This leaves a session with real human activity behind ` +
+    `it (Cloudflare trusts that more than a session that's only ever been driven by a script).\n` +
+    `       When you're done, press Enter here to close and save the profile...\n`
+  );
+
+  await context.close();
+  console.log(`[auth] Done. Profile saved to ${dir}/ (this directory IS the session — nothing else to save).`);
+}
+
 async function authBrowser(site) {
-  console.log(`[auth] Opening browser for ${site} login...`);
+  const hadSession = sessionExists(site);
+  console.log(`[auth] Opening browser for ${site}${hadSession ? ' (reusing existing session)' : ' login'}...`);
   const browser = await chromium.launch({ headless: false, channel: 'chrome' });
   const context = await browser.newContext();
+
+  // Load the existing session first (if any) so Cloudflare sees a continuation
+  // of an already-trusted session rather than a brand-new browser.
+  if (hadSession) await applySession(site, context);
+
   const page = await context.newPage();
   await page.goto(SITE_URLS[site]);
-  await waitForEnter(`\n[auth] Log in to ${site} in the browser, then press Enter here...\n`);
+
+  if (!hadSession) {
+    await waitForEnter(`\n[auth] Log in to ${site} in the browser, then press Enter here...\n`);
+  }
+
   await saveSession(site, context, page);
   await browser.close();
   console.log(`[auth] Done. Session saved to .session/${site}.json`);
@@ -112,7 +153,8 @@ if (process.argv[1]?.replace(/\\/g, '/').endsWith('src/auth.js')) {
     process.exit(1);
   }
 
-  (site === 'google' ? authGoogle() : authBrowser(site)).catch(err => {
+  const run = site === 'google' ? authGoogle() : PROFILE_DIRS[site] ? authPersistent(site) : authBrowser(site);
+  run.catch(err => {
     console.error('[auth] Error:', err.message);
     process.exit(1);
   });

@@ -5,8 +5,7 @@
 import 'dotenv/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { applySession, saveSession } from './session.js';
-import { isLoggedOut } from './auth.js';
+import { isLoggedOut, PROFILE_DIRS } from './auth.js';
 import { resolveOrgId } from './apollo.js';
 import { findPeople } from './finder.js';
 
@@ -43,16 +42,18 @@ async function main() {
     process.exit(1);
   }
 
-  const browser = await chromium.launch({ headless: true, channel: 'chrome' });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  const context = await chromium.launchPersistentContext(PROFILE_DIRS.apollo, {
+    headless: true,
+    channel: 'chrome',
+    ignoreDefaultArgs: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
+  });
+  const page = context.pages()[0] || await context.newPage();
 
-  await applySession('apollo', context, page);
   await page.goto(APOLLO_URL, { waitUntil: 'domcontentloaded' });
 
   if (await isLoggedOut(page)) {
     console.error('[find] Not logged in to Apollo. Run: npm run auth -- --site apollo');
-    await browser.close();
+    await context.close();
     process.exit(1);
   }
 
@@ -61,7 +62,6 @@ async function main() {
     console.log(`\n[find] Scanning "${orgName}" in "${location}", role "${role}", max ${maxResults}\n`);
 
     const { results, maybes, byRole } = await findPeople(page, orgId, { location, maxResults, role });
-    await saveSession('apollo', context, page);
 
     console.log('\n=== RESULTS (confirmed UA/RU) ===');
     console.log(results.length ? results.map(r => r.linkedinUrl ?? r).join('\n') : 'None.');
@@ -76,7 +76,7 @@ async function main() {
       console.log(byRole.map(r => `[${r.confidence}] ${r.linkedinUrl}  ${r.name}`).join('\n'));
     }
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 

@@ -3,6 +3,7 @@
 .doc
 .playwright-mcp
 .session
+.apollo-profile
 node_modules
 .env
 .mcp.json

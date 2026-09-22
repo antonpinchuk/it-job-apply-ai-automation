@@ -97,14 +97,20 @@ npm run auth -- --site jobright   # same
 npm run auth -- --site google     # Account selection and OAuth consent in browser
 ```
 
-Sessions are saved to `.session/`:
+Sessions are saved to `.session/`, except Apollo which uses a persistent
+Chrome profile at `.apollo-profile/` (a real on-disk browser profile, not a
+cookie snapshot — needed to keep Cloudflare happy):
 
-| File | Used for | Renewed |
+| File / dir | Used for | Renewed |
 |------|----------|---------|
 | `.session/linkedin.json` | opening LinkedIn profiles | manually (rarely) |
-| `.session/apollo.json` | Apollo people search API | auto after each run |
+| `.apollo-profile/` | Apollo people search API | manually — re-run `npm run auth -- --site apollo` and click around a bit before saving |
 | `.session/jobright.json` | Jobright lookup API (`SESSION_ID` cookie) | manually when expired |
 | `.session/google.json` | Google Sheets write | auto (refresh token) |
+
+If Apollo auth gets stuck behind a Cloudflare challenge even in the headed
+`npm run auth` flow, see the `apollo-auth` skill (`.claude/skills/`) for a
+recovery procedure.
 
 ### Google OAuth (one-time setup)
 

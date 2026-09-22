@@ -6,7 +6,7 @@ import 'dotenv/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { applySession, saveSession, sessionExists } from './session.js';
-import { isLoggedOut } from './auth.js';
+import { isLoggedOut, PROFILE_DIRS } from './auth.js';
 import { resolveOrgId } from './apollo.js';
 import { findPeople, searchAbort } from './finder.js';
 import { appendApplication, checkGoogleAuth } from './sheets.js';
@@ -119,8 +119,8 @@ async function main() {
     console.error('[main] No LinkedIn session. Run: npm run auth -- --site linkedin');
     process.exit(1);
   }
-  if (!sessionExists('apollo')) {
-    console.error('[main] No Apollo session. Run: npm run auth -- --site apollo');
+  if (!fs.existsSync(PROFILE_DIRS.apollo)) {
+    console.error('[main] No Apollo profile. Run: npm run auth -- --site apollo');
     process.exit(1);
   }
 
@@ -140,16 +140,18 @@ async function main() {
   const linkedinCtx = await linkedinBrowser.newContext();
   await applySession('linkedin', linkedinCtx);
 
-  const apolloBrowser = await chromium.launch({ headless: true, channel: 'chrome' });
-  const apolloCtx = await apolloBrowser.newContext();
-  const apolloPage = await apolloCtx.newPage();
-  await applySession('apollo', apolloCtx, apolloPage);
+  const apolloCtx = await chromium.launchPersistentContext(PROFILE_DIRS.apollo, {
+    headless: true,
+    channel: 'chrome',
+    ignoreDefaultArgs: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
+  });
+  const apolloPage = apolloCtx.pages()[0] || await apolloCtx.newPage();
   await apolloPage.goto(APOLLO_URL, { waitUntil: 'domcontentloaded' });
 
   if (await isLoggedOut(apolloPage)) {
     console.error('[main] Not logged in to Apollo. Run: npm run auth -- --site apollo');
     await linkedinBrowser.close();
-    await apolloBrowser.close();
+    await apolloCtx.close();
     process.exit(1);
   }
 
@@ -205,7 +207,7 @@ async function main() {
       } catch (err) {
         if (/session expired/i.test(err.message)) {
           console.error(`[main] ${err.message}`);
-          await linkedinBrowser.close(); await apolloBrowser.close(); process.exit(1);
+          await linkedinBrowser.close(); await apolloCtx.close(); process.exit(1);
         }
         const retry = await ask(
           `[main] Apollo: "${searchName}" not found.\n` +
@@ -224,7 +226,7 @@ async function main() {
           } catch (idErr) {
             if (/session expired/i.test(idErr.message)) {
               console.error(`[main] ${idErr.message}`);
-              await linkedinBrowser.close(); await apolloBrowser.close(); process.exit(1);
+              await linkedinBrowser.close(); await apolloCtx.close(); process.exit(1);
             }
             console.error(`[main] Apollo ID lookup failed: ${idErr.message}`);
           }
@@ -416,12 +418,17 @@ async function main() {
     salaryDesc,
   });
 
-  await saveSession('apollo', apolloCtx, apolloPage);
-
   console.log('[main] Entry added to sheet.');
 
+  // Persist the LinkedIn session after a non-headless run — cookies picked up
+  // from real clicking/scrolling (Connect dialogs, profile scrolls) refresh
+  // rotating cookies and look like real usage, unlike a session that only
+  // ever gets read. Skipped for --no-referrers, where the context is headless
+  // and never saw human interaction.
+  if (!noReferrers) await saveSession('linkedin', linkedinCtx, jobPage);
+
   await linkedinBrowser.close();
-  await apolloBrowser.close();
+  await apolloCtx.close();
   console.log('[main] Done.');
 }
 
