@@ -63,9 +63,12 @@ async function authBrowser(site) {
   const page = await context.newPage();
   await page.goto(SITE_URLS[site]);
 
-  if (!hadSession) {
-    await waitForEnter(`\n[auth] Log in to ${site} in the browser, then press Enter here...\n`);
-  }
+  const prompt = hadSession
+    ? `\n[auth] Still logged in to ${site} — click around for a bit (browse a page or two) ` +
+      `before saving, so the session shows real activity, not just a reload. ` +
+      `Press Enter here when you're done...\n`
+    : `\n[auth] Log in to ${site} in the browser, then click around a bit, then press Enter here...\n`;
+  await waitForEnter(prompt);
 
   await saveSession(site, context, page);
   await browser.close();
