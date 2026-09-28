@@ -65,7 +65,7 @@ Manual process (full flow):
 - Node.js 18+
 - Chrome installed
 - Accounts: LinkedIn, Apollo.io, Jobright, Google
-- LLM: Azure Foundry
+- LLM: OpenAI
 
 ## Setup
 
@@ -79,10 +79,9 @@ Fill in `.env`:
 
 | Variable | Description |
 |----------|-------------|
-| `AZURE_OPENAI_KEY` | Azure OpenAI API key |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI resource endpoint |
-| `AZURE_OPENAI_DEPLOYMENT` | Deployment name (e.g. `gpt-4.1-mini`) |
-| `AZURE_OPENAI_API_VERSION` | API version (default: `2024-08-01-preview`) |
+| `OPENAI_KEY` | OpenAI API key |
+| `OPENAI_MODEL` | Model for classification calls (default: `gpt-4.1-mini`) |
+| `OPENAI_MODEL_STRONG` | Model for message generation (default: `gpt-5`) |
 | `GOOGLE_CLIENT_ID` | OAuth Client ID from Google Cloud Console |
 | `GOOGLE_CLIENT_SECRET` | OAuth Client Secret |
 | `GOOGLE_SPREADSHEET_ID` | Google Sheet ID |
@@ -163,7 +162,7 @@ src/
 ├── finder.js     — referrer search logic (cascadeSearch → findPeople)
 ├── apollo.js     — Apollo.io API via browser session
 ├── jobright.js   — Jobright API (HTTP, SESSION_ID cookie)
-├── llm.js        — Azure OpenAI: name/role/domain/location/message generation
+├── llm.js        — OpenAI: name/role/domain/location/message generation
 ├── linkedin.js   — LinkedIn profile scraping + Connect dialog filling
 ├── sheets.js     — Google Sheets writer
 └── config.js     — role options and Stack/Domain examples for LLM few-shot

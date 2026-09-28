@@ -1,24 +1,20 @@
 import OpenAI from 'openai';
 
-function makeClient(deployment) {
-  return new OpenAI({
-    apiKey: process.env.AZURE_OPENAI_KEY,
-    baseURL: `${process.env.AZURE_OPENAI_ENDPOINT.replace(/\/$/, '')}/openai/deployments/${deployment}`,
-    defaultQuery: { 'api-version': process.env.AZURE_OPENAI_API_VERSION || '2024-08-01-preview' },
-    defaultHeaders: { 'api-key': process.env.AZURE_OPENAI_KEY },
-  });
-}
-
-const client       = makeClient(process.env.AZURE_OPENAI_DEPLOYMENT);
-const clientStrong = makeClient(process.env.AZURE_OPENAI_DEPLOYMENT_STRONG || 'gpt-4.1');
+const client = new OpenAI({ apiKey: process.env.OPENAI_KEY });
 
 let _pauseUntil = 0;
 
 async function ask(prompt, { strong = false, maxTokens = 100 } = {}) {
-  const c   = strong ? clientStrong : client;
+  const c   = client;
   const dep = strong
-    ? (process.env.AZURE_OPENAI_DEPLOYMENT_STRONG || 'gpt-4.1')
-    : process.env.AZURE_OPENAI_DEPLOYMENT;
+    ? (process.env.OPENAI_MODEL_STRONG || 'gpt-5')
+    : (process.env.OPENAI_MODEL || 'gpt-4.1-mini');
+  // gpt-5 (reasoning model) uses max_completion_tokens (reasoning tokens count
+  // against it — keep effort minimal so they don't eat the visible output) and
+  // only supports the default temperature.
+  const params = strong
+    ? { max_completion_tokens: maxTokens, reasoning_effort: 'minimal' }
+    : { max_tokens: maxTokens, temperature: 0 };
   for (;;) {
     const wait = _pauseUntil - Date.now();
     if (wait > 0) {
@@ -29,8 +25,7 @@ async function ask(prompt, { strong = false, maxTokens = 100 } = {}) {
       const response = await c.chat.completions.create({
         model: dep,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0,
-        max_tokens: maxTokens,
+        ...params,
         response_format: { type: 'json_object' },
       });
       const raw = response.choices[0].message.content;
@@ -182,7 +177,10 @@ Few-shot examples:
 - "Engineering Manager - Machine Learning" → {"role":"Lead","stack":"ML"}
 - "AI/ML Engineer" → {"role":"Developer","stack":"AI/ML"}
 - "Staff Cloud Engineer, Site Reliability Engineering" → {"role":"Lead","stack":"DevOps"}
-- "Staff Machine Learning Platform Engineer" → {"role":"Lead","stack":"Platform, ML"}
+- "MLOps Engineer" → {"role":"MLOps","stack":"MLOps"}
+- "Machine Learning Infrastructure Engineer" → {"role":"MLOps","stack":"ML Infra"}
+- "Staff Machine Learning Platform Engineer" → {"role":"MLOps","stack":"ML Platform"}
+- "AI Infrastructure / MLOps Engineer" → {"role":"MLOps","stack":"AI Infra"}
 - "Senior Technical Architect (Healthcare)" → {"role":"Architect","stack":"Architect"}
 
 Return only JSON: {"role": "...", "stack": "..."}
