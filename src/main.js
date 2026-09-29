@@ -11,7 +11,7 @@ import { resolveOrgId } from './apollo.js';
 import { findPeople, searchAbort } from './finder.js';
 import { appendApplication, checkGoogleAuth } from './sheets.js';
 import { classifyTitleRoleStack, generateDomainLabel, normalizeLocation, generateConnectMessage, extractJobInfoFromPage } from './llm.js';
-import { STACK_EXAMPLES, DOMAIN_EXAMPLES, ROLE_OPTIONS } from './config.js';
+import { STACK_EXAMPLES, DOMAIN_EXAMPLES, ROLE_OPTIONS, OUTREACH_TITLE_OPTIONS } from './config.js';
 import { lookupJob } from './jobright.js';
 import { scrapeProfileData, fillConnectNote } from './linkedin.js';
 import fs from 'fs';
@@ -187,8 +187,9 @@ async function main() {
     if (!fullJobTitle) fullJobTitle = await ask('Full job title: ');
   }
 
-  // Classify role + stack via LLM in one call
-  const { role: jobRole, stack: jobTitle } = await classifyTitleRoleStack(fullJobTitle, ROLE_OPTIONS, STACK_EXAMPLES);
+  // Classify role + stack + outreach title via LLM in one call
+  const { role: jobRole, stack: jobTitle, outreachTitle } =
+    await classifyTitleRoleStack(fullJobTitle, ROLE_OPTIONS, STACK_EXAMPLES, OUTREACH_TITLE_OPTIONS);
 
   // ── STEP 4: Find company in Apollo ──────────────────────────────
   let orgId = null, orgName = companyName || null, linkedinCompanyUrl = null;
@@ -358,7 +359,7 @@ async function main() {
         title: personTitle,
         companyName: orgName,
         jobTitle,
-        jobRole,
+        jobRole: outreachTitle,
         nameOrigin,
         university: profileData?.university || null,
         location: profileData?.location || null,

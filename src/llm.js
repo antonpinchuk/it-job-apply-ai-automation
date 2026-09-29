@@ -138,21 +138,23 @@ Rules:
 }
 
 /**
- * Classify job title into Role + Stack in one LLM call.
+ * Classify job title into Role + Stack + outreach title in one LLM call.
  *
  * @param {string} title       full job title
- * @param {string[]} roleOpts  allowed role values
+ * @param {string[]} roleOpts  allowed role values (Sheets category)
  * @param {string[]} stackExamples  existing stack labels for few-shot
- * @returns {Promise<{role: string, stack: string}>}
+ * @param {string[]} outreachOpts  allowed outreach-title values (LinkedIn message)
+ * @returns {Promise<{role: string, stack: string, outreachTitle: string}>}
  */
-export async function classifyTitleRoleStack(title, roleOpts, stackExamples) {
+export async function classifyTitleRoleStack(title, roleOpts, stackExamples, outreachOpts) {
   const result = await ask(`
-Classify this job title into Role and Stack for a job tracker spreadsheet.
+Classify this job title into Role, Stack, and Outreach Title for a job tracker spreadsheet
+and a LinkedIn outreach message.
 
 Job title: "${title}"
 
 Role must be exactly one of: ${roleOpts.join(', ')}
-Role meanings:
+Role meanings (coarse category for the spreadsheet):
 - Lead = manages a team (Team Lead, Staff, Principal, Manager, Head of, Director of Eng)
 - Architect = designs systems/solutions
 - Developer = individual contributor, non-DevOps (Backend, Frontend, Full-stack, Mobile)
@@ -163,32 +165,46 @@ Role meanings:
 Stack = 1-3 words describing the specific tech/domain focus (NOT duplicating the role word).
 Stack examples from previous applications: ${stackExamples.join(', ')}
 
-Few-shot examples:
-- "Team Lead - Cloud DevOps Engineer" → {"role":"Lead","stack":"Cloud DevOps"}
-- "AI Engineer/Developer" → {"role":"Developer","stack":"AI"}
-- "Staff Backend Engineer - Adaptive Telemetry | USA | Remote" → {"role":"Lead","stack":"Backend Telemetry"}
-- "Enterprise Application DevOps Engineer" → {"role":"DevOps","stack":"DevOps"}
-- "Senior Software Engineer-DevOps" → {"role":"DevOps","stack":"DevOps"}
-- "DevOps & Platform Solution Engineer" → {"role":"DevOps","stack":"Platform"}
-- "Site Reliability Engineer" → {"role":"DevOps","stack":"SRE"}
-- "AWS Infrastructure Developer" → {"role":"DevOps","stack":"AWS"}
-- "Developer Experience Engineer" → {"role":"DevOps","stack":"DevEx"}
-- "Software Engineer, Developer Experience" → {"role":"DevOps","stack":"DevEx"}
-- "Engineering Manager - Machine Learning" → {"role":"Lead","stack":"ML"}
-- "AI/ML Engineer" → {"role":"Developer","stack":"AI/ML"}
-- "Staff Cloud Engineer, Site Reliability Engineering" → {"role":"Lead","stack":"DevOps"}
-- "MLOps Engineer" → {"role":"MLOps","stack":"MLOps"}
-- "Machine Learning Infrastructure Engineer" → {"role":"MLOps","stack":"ML Infra"}
-- "Staff Machine Learning Platform Engineer" → {"role":"MLOps","stack":"ML Platform"}
-- "AI Infrastructure / MLOps Engineer" → {"role":"MLOps","stack":"AI Infra"}
-- "Senior Technical Architect (Healthcare)" → {"role":"Architect","stack":"Architect"}
+Outreach Title must be exactly one of: ${outreachOpts.join(', ')}
+This is the job title mentioned in a LinkedIn message to a stranger ("your company is
+hiring a ${'${outreachTitle}'}") — it must read like a real, recognizable job title, not
+a management-level label. Pick the option that best matches what the person would
+actually be DOING day to day, regardless of seniority/management level implied by Role
+above (e.g. an "Engineering Manager, Machine Learning" posting is Role=Lead for the
+spreadsheet, but the outreach title is still "ML Engineer" — nobody says "hiring a Lead").
 
-Return only JSON: {"role": "...", "stack": "..."}
+Few-shot examples (role / stack / outreachTitle):
+- "Team Lead - Cloud DevOps Engineer" → {"role":"Lead","stack":"Cloud DevOps","outreachTitle":"DevOps"}
+- "AI Engineer/Developer" → {"role":"Developer","stack":"AI","outreachTitle":"AI Developer"}
+- "Staff Backend Engineer - Adaptive Telemetry | USA | Remote" → {"role":"Lead","stack":"Backend Telemetry","outreachTitle":"Backend Developer"}
+- "Enterprise Application DevOps Engineer" → {"role":"DevOps","stack":"DevOps","outreachTitle":"DevOps"}
+- "Senior Software Engineer-DevOps" → {"role":"DevOps","stack":"DevOps","outreachTitle":"DevOps"}
+- "DevOps & Platform Solution Engineer" → {"role":"DevOps","stack":"Platform","outreachTitle":"DevOps"}
+- "Site Reliability Engineer" → {"role":"DevOps","stack":"SRE","outreachTitle":"DevOps"}
+- "AWS Infrastructure Developer" → {"role":"DevOps","stack":"AWS","outreachTitle":"DevOps"}
+- "Developer Experience Engineer" → {"role":"DevOps","stack":"DevEx","outreachTitle":"DevOps"}
+- "Software Engineer, Developer Experience" → {"role":"DevOps","stack":"DevEx","outreachTitle":"DevOps"}
+- "Engineering Manager - Machine Learning" → {"role":"Lead","stack":"ML","outreachTitle":"ML Engineer"}
+- "AI/ML Engineer" → {"role":"Developer","stack":"AI/ML","outreachTitle":"ML Engineer"}
+- "Staff Cloud Engineer, Site Reliability Engineering" → {"role":"Lead","stack":"DevOps","outreachTitle":"DevOps"}
+- "MLOps Engineer" → {"role":"MLOps","stack":"MLOps","outreachTitle":"ML Engineer"}
+- "Machine Learning Infrastructure Engineer" → {"role":"MLOps","stack":"ML Infra","outreachTitle":"ML Engineer"}
+- "Staff Machine Learning Platform Engineer" → {"role":"MLOps","stack":"ML Platform","outreachTitle":"ML Engineer"}
+- "AI Infrastructure / MLOps Engineer" → {"role":"MLOps","stack":"AI Infra","outreachTitle":"ML Engineer"}
+- "Senior Technical Architect (Healthcare)" → {"role":"Architect","stack":"Architect","outreachTitle":"Backend Developer"}
+- "Engineering Manager, Machine Learning - Fraud Detection" → {"role":"Lead","stack":"ML Fraud Detection","outreachTitle":"ML Engineer"}
+- "Data Platform Engineer" → {"role":"DevOps","stack":"Data Platform","outreachTitle":"Data Engineer"}
+- "Senior QA Automation Engineer" → {"role":"Developer","stack":"QA Automation","outreachTitle":"QA Engineer"}
+- "Application Security Engineer" → {"role":"Developer","stack":"AppSec","outreachTitle":"Security Engineer"}
+- "Staff Software Engineer, Security" → {"role":"Lead","stack":"Security","outreachTitle":"Security Engineer"}
+
+Return only JSON: {"role": "...", "stack": "...", "outreachTitle": "..."}
   `.trim());
-  const role  = result.role?.trim()  || 'DevOps';
-  const stack = result.stack?.trim() || title;
-  console.log(`[llm] Role: "${role}"  Stack: "${stack}"  (from: "${title}")`);
-  return { role, stack };
+  const role          = result.role?.trim()          || 'DevOps';
+  const stack         = result.stack?.trim()          || title;
+  const outreachTitle = result.outreachTitle?.trim() || role;
+  console.log(`[llm] Role: "${role}"  Stack: "${stack}"  Outreach: "${outreachTitle}"  (from: "${title}")`);
+  return { role, stack, outreachTitle };
 }
 
 /**
@@ -384,7 +400,7 @@ export async function generateConnectMessage(data) {
   const profileText     = [profileAbout, currentJobDesc, title].filter(Boolean).join(' ');
   const currentRoleText = [currentJobDesc, title].filter(Boolean).join(' ');
   const hasGamedev  = /game|unity|unreal|gamedev/i.test(profileText);
-  const hasIoT      = /iot|embedded|device|firmware|hardware/i.test(profileText);
+  const hasIoT      = /\biot\b|embedded system|firmware|\bhardware\b/i.test(profileText);
   // Mobile/DevOps overlap only counts if it's their CURRENT role — mentioning
   // "I was also in mobile for 10 years" is odd if they moved to backend since.
   const hasMobile   = /mobile|android|ios|swift|kotlin/i.test(currentRoleText);
@@ -454,8 +470,8 @@ export async function generateConnectMessage(data) {
     : `Write in ENGLISH. Simple conversational English. More conservative tone.`;
 
   const result = await ask(`
-Write a LinkedIn connection request message on behalf of Anton, a ${jobRole} engineer.
-Anton sees an interesting ${jobRole} opening at ${companyName} and is looking for a referral.
+Write a LinkedIn connection request message on behalf of Anton.
+Anton sees his company is hiring for a ${jobRole} position at ${companyName} and is looking for a referral.
 
 Recipient: ${title || 'employee'} at ${companyName}
 ${university ? `Their university: ${university} (location: ${uniLoc})` : ''}
@@ -471,10 +487,13 @@ Ukrainian:
 - "Привіт, цікава ваша компанія, 20 людей працюють з Канади. Я сам цікавлюся трейдингом. Я знайшов цікаву відкриту позицію, але рекрутери часто не відповідають. Ти б міг мене зареферить? Хоча б щоб попасти на інтервʼю. Буду також радий проф. знайомству. Може навіть зустрітись на каву в даунтауні."
 Russian:
 - "Привет, интересна ваша компания. Увидел открытую вакансию DevOps, рекрутеры сейчас плохо отвечают. Ищу пути достучаться и попасть на интервью. Буду рад проф. знакомству. Я тоже занимался GameDev, по фану пилю проект на unreal."
+English:
+- "Hi, saw your company is hiring for a DevOps role. Recruiters barely respond these days, so trying other ways to at least get an interview. Would be great to connect."
+- "Hi, noticed you're hiring a DevOps engineer, might even be your team. Competition is rough right now and recruiters don't get back to people. Would appreciate connecting professionally."
 
 Message structure (TARGET ~300 chars, HARD LIMIT 300 chars, adapt freely, stay natural):
 1. Привіт / Hi / Привет  (NO name after greeting — saves space)
-2. Ваша компанія наймає ${jobRole} / Your company is hiring ${jobRole}
+2. Ваша компанія наймає ${jobRole} / Your company is hiring a ${jobRole}
 4. Рекрутери зараз майже не відповідають / Recruiters often do not respond
 5. Шукаю шляхи попасти на інтервʼю / Looking for ways to get to an interview
 6. Буду радий проф. знайомству / Happy to connect professionally
@@ -484,7 +503,8 @@ ${customizationBlock}
 Rules:
 - Target EXACTLY ~300 characters — expand base message if no personalization used, shorten if personalization is added
 - NO name after "Привіт"/"Hi"/"Привет" — start directly with the company/role info
-- Sound like a real human, NOT an AI template
+- Write like one person casually messaging another, in plain everyday language, NOT a cover letter or an AI template
+- Don't repeat the same word or fact twice (e.g. don't say the company name twice) — every sentence should add something new
 - No emojis
 
 Return only JSON: {"message": "..."}

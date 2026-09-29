@@ -5,6 +5,17 @@
  */
 export const ROLE_OPTIONS = ['Lead', 'Architect', 'Developer', 'DevOps', 'MLOps', 'Director'];
 
+/**
+ * Unified job title used in the LinkedIn outreach message ("your company is
+ * hiring a ${outreachTitle}"). Deliberately separate from ROLE_OPTIONS (which
+ * is a coarse category for the Sheets row) — this needs to actually read like
+ * a real job title to the recipient.
+ */
+export const OUTREACH_TITLE_OPTIONS = [
+  'Backend Developer', 'AI Developer', 'Lead Developer', 'ML Engineer', 'DevOps',
+  'Data Engineer', 'QA Engineer', 'Security Engineer',
+];
+
 export const DOMAIN_EXAMPLES = [
   'fintech', 'healthcare', 'AI', 'gaming', 'SaaS', 'enterprise', 'ecommerce',
   'media', 'telecom', 'cloud', 'cybersecurity', 'edtech', 'logistics', 'real estate',
