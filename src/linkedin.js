@@ -135,8 +135,12 @@ export async function scrapeProfileData(page) {
         if (/^languages?$/i.test(section.querySelector('h2')?.textContent?.trim() || ''))
           return section.innerText;
       }
-      // Fallback: look for Languages block in body text
-      const m = bodyText.match(/\bLanguages?\b([\s\S]{0,400}?)(?:\n\n[A-Z]|\nSkills|\nInterests|\nRecommendations|$)/i);
+      // Fallback: look for a "Languages" SECTION HEADING in body text — anchored
+      // to a line that is just "Languages" on its own (as LinkedIn renders section
+      // headings), not any mention of the word anywhere on the page (e.g. the
+      // "Select language" site-interface footer widget, which lists every UI
+      // language LinkedIn supports and would otherwise be matched first).
+      const m = bodyText.match(/\n[Ll]anguages\n([\s\S]{0,400}?)(?:\n\n[A-Z]|\nSkills|\nInterests|\nRecommendations|$)/);
       return m ? m[1] : '';
     })();
     if (langSectionText) {
